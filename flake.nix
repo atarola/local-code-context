@@ -125,8 +125,10 @@
           cfg = config.services.local-code-rag;
           package = cfg.package;
           repoArgs = lib.concatMapStringsSep " " (repo: "--repo ${lib.escapeShellArg repo}") cfg.repos;
+          workspaceArgs = lib.concatMapStringsSep " " (workspace: "--workspace ${lib.escapeShellArg workspace}") cfg.workspaces;
           watchArgs = lib.concatStringsSep " " ([
             repoArgs
+            workspaceArgs
             "--db ${lib.escapeShellArg cfg.db}"
             "--collection ${lib.escapeShellArg cfg.collection}"
             "--embed-model ${lib.escapeShellArg cfg.embedModel}"
@@ -164,6 +166,15 @@
                 "/home/your-user/code/service-b"
               ];
               description = "Repository directories to watch and index.";
+            };
+
+            workspaces = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              example = [
+                "/home/your-user/code"
+              ];
+              description = "Workspace directories. Each immediate child directory containing `.git` is watched and indexed as a separate repo.";
             };
 
             db = lib.mkOption {
@@ -266,8 +277,8 @@
           config = lib.mkIf cfg.enable {
             assertions = [
               {
-                assertion = cfg.repos != [ ];
-                message = "services.local-code-rag.repos must contain at least one repo path.";
+                assertion = cfg.repos != [ ] || cfg.workspaces != [ ];
+                message = "services.local-code-rag.repos or services.local-code-rag.workspaces must contain at least one path.";
               }
             ];
 

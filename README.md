@@ -32,9 +32,9 @@ uv sync
 Run commands directly from the flake:
 
 ```bash
-nix run .#index -- --repo /path/to/service-a --repo /path/to/service-b --db ./codebase_index
+nix run .#index -- --workspace /path/to/code --db ./codebase_index
 nix run .#query -- --db ./codebase_index --q "Where is retry handled?"
-nix run .#watch -- --repo /path/to/service-a --db ./codebase_index
+nix run .#watch -- --workspace /path/to/code --db ./codebase_index
 ```
 
 Install from another flake by adding this repo as an input and using
@@ -44,7 +44,10 @@ The flake also exports a Home Manager module:
 
 ```nix
 {
-  inputs.local-code-rag.url = "github:atarola/local-code-rag";
+  inputs.local-code-rag = {
+    url = "github:atarola/local-code-rag";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 }
 ```
 
@@ -60,9 +63,8 @@ Pass `inputs` to Home Manager and import the module from `home.nix`:
 
   services.local-code-rag = {
     enable = true;
-    repos = [
-      "/home/your-user/code/service-a"
-      "/home/your-user/code/service-b"
+    workspaces = [
+      "/home/your-user/code"
     ];
     db = "/home/your-user/.local/share/local-code-rag/codebase_index";
     ollamaUrl = "http://127.0.0.1:11434";
@@ -124,8 +126,15 @@ uv sync
 
 ## Usage
 
-Index each codebase. Repeat `--repo` for as many repos as you want in the same
-DB:
+Index a workspace. Each immediate child directory containing `.git` is indexed
+as a separate repo:
+
+```bash
+uv run code-rag-index --workspace /path/to/code --db ./codebase_index
+```
+
+Or index explicit repos. Repeat `--repo` for as many repos as you want in the
+same DB:
 
 ```bash
 uv run code-rag-index --repo /path/to/service-a --repo /path/to/service-b --db ./codebase_index

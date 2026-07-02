@@ -71,6 +71,32 @@ def repo_name(repo: Path) -> str:
     return repo.resolve().name
 
 
+def discover_workspace_repos(workspace: Path) -> list[Path]:
+    if not workspace.exists() or not workspace.is_dir():
+        raise SystemExit(f"workspace does not exist or is not a directory: {workspace}")
+
+    repos: list[Path] = []
+    for child in sorted(workspace.iterdir()):
+        if not child.is_dir() or should_skip_path(child.relative_to(workspace)):
+            continue
+        if (child / ".git").exists():
+            repos.append(child.resolve())
+    return repos
+
+
+def resolve_repos(repos: list[str] | None = None, workspaces: list[str] | None = None) -> list[Path]:
+    repo_paths = [Path(repo).expanduser().resolve() for repo in repos or []]
+    for workspace_arg in workspaces or []:
+        repo_paths.extend(discover_workspace_repos(Path(workspace_arg).expanduser().resolve()))
+
+    deduped: dict[str, Path] = {}
+    for repo in repo_paths:
+        if not repo.exists() or not repo.is_dir():
+            raise SystemExit(f"repo does not exist or is not a directory: {repo}")
+        deduped[str(repo)] = repo
+    return list(deduped.values())
+
+
 def manifest_path(db_path: Path) -> Path:
     return db_path / "manifest.json"
 
@@ -261,8 +287,13 @@ def run_index(
     embed_model: str = DEFAULT_EMBED_MODEL,
     ollama_url: str = DEFAULT_OLLAMA_URL,
     force: bool = False,
+    workspaces: list[str] | None = None,
 ) -> None:
     import chromadb
+
+    repo_paths = resolve_repos(repos=repos, workspaces=workspaces)
+    if not repo_paths:
+        raise SystemExit("at least one --repo or --workspace is required")
 
     db_path = Path(db).expanduser().resolve()
     client = chromadb.PersistentClient(path=str(db_path))
@@ -273,11 +304,7 @@ def run_index(
     total_skipped = 0
     total_deleted = 0
 
-    for repo_arg in repos:
-        repo_root = Path(repo_arg).expanduser().resolve()
-        if not repo_root.exists() or not repo_root.is_dir():
-            raise SystemExit(f"repo does not exist or is not a directory: {repo_root}")
-
+    for repo_root in repo_paths:
         repo = repo_name(repo_root)
         files = iter_files(repo_root)
         seen_keys = {file_key(repo, path.relative_to(repo_root).as_posix()) for path in files}
@@ -313,7 +340,13 @@ def run_index(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Index one or more repos into a local Chroma DB.")
-    parser.add_argument("--repo", action="append", required=True, help="Repo path to index. Repeat for multiple repos.")
+    parser.add_argument("--repo", action="append", default=[], help="Repo path to index. Repeat for multiple repos.")
+    parser.add_argument(
+        "--workspace",
+        action="append",
+        default=[],
+        help="Workspace directory whose immediate Git child directories should be indexed. Repeat for multiple workspaces.",
+    )
     parser.add_argument("--db", default=DEFAULT_DB, help=f"Chroma DB directory. Default: {DEFAULT_DB}")
     parser.add_argument("--collection", default=DEFAULT_COLLECTION, help=f"Chroma collection. Default: {DEFAULT_COLLECTION}")
     parser.add_argument("--embed-model", default=DEFAULT_EMBED_MODEL, help=f"Ollama embedding model. Default: {DEFAULT_EMBED_MODEL}")
@@ -323,6 +356,7 @@ def main() -> None:
 
     run_index(
         repos=args.repo,
+        workspaces=args.workspace,
         db=args.db,
         collection_name=args.collection,
         embed_model=args.embed_model,

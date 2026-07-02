@@ -10,12 +10,13 @@ from local_code_rag.index_repos import (
     DEFAULT_DB,
     DEFAULT_EMBED_MODEL,
     DEFAULT_OLLAMA_URL,
+    resolve_repos,
     should_skip_path,
     run_index,
 )
 
 
-def relevant_change(path: str, repos: list[Path]) -> bool:
+def relevant_change(path: str, repos: list[Path], workspaces: list[Path]) -> bool:
     changed = Path(path).resolve()
     for repo in repos:
         try:
@@ -23,11 +24,18 @@ def relevant_change(path: str, repos: list[Path]) -> bool:
         except ValueError:
             continue
         return not should_skip_path(rel)
+    for workspace in workspaces:
+        try:
+            rel = changed.relative_to(workspace)
+        except ValueError:
+            continue
+        return len(rel.parts) <= 2 and not should_skip_path(rel)
     return False
 
 
 def run_watch(
     repos: list[str],
+    workspaces: list[str],
     db: str,
     collection_name: str,
     embed_model: str,
@@ -37,21 +45,28 @@ def run_watch(
 ) -> None:
     from watchfiles import watch
 
-    repo_paths = [Path(repo).expanduser().resolve() for repo in repos]
-    for repo in repo_paths:
-        if not repo.exists() or not repo.is_dir():
-            raise SystemExit(f"repo does not exist or is not a directory: {repo}")
+    workspace_paths = [Path(workspace).expanduser().resolve() for workspace in workspaces]
+    repo_paths = resolve_repos(repos=repos, workspaces=workspaces)
+    if not repo_paths:
+        raise SystemExit("at least one --repo or --workspace is required")
 
     if initial_index:
         print("initial index")
-        run_index(repos=[str(repo) for repo in repo_paths], db=db, collection_name=collection_name, embed_model=embed_model, ollama_url=ollama_url)
+        run_index(
+            repos=[str(repo) for repo in repo_paths],
+            db=db,
+            collection_name=collection_name,
+            embed_model=embed_model,
+            ollama_url=ollama_url,
+        )
 
     print("watching:")
-    for repo in repo_paths:
-        print(f"  {repo}")
+    for path in [*repo_paths, *workspace_paths]:
+        print(f"  {path}")
 
-    for changes in watch(*repo_paths, debounce=int(debounce_seconds * 1000)):
-        relevant = [(change, path) for change, path in changes if relevant_change(path, repo_paths)]
+    for changes in watch(*repo_paths, *workspace_paths, debounce=int(debounce_seconds * 1000)):
+        repo_paths = resolve_repos(repos=repos, workspaces=workspaces)
+        relevant = [(change, path) for change, path in changes if relevant_change(path, repo_paths, workspace_paths)]
         if not relevant:
             continue
 
@@ -74,7 +89,13 @@ def run_watch(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Watch repos recursively and refresh the local Chroma code index.")
-    parser.add_argument("--repo", action="append", required=True, help="Repo path to watch. Repeat for multiple repos.")
+    parser.add_argument("--repo", action="append", default=[], help="Repo path to watch. Repeat for multiple repos.")
+    parser.add_argument(
+        "--workspace",
+        action="append",
+        default=[],
+        help="Workspace directory whose immediate Git child directories should be watched as repos. Repeat for multiple workspaces.",
+    )
     parser.add_argument("--db", default=DEFAULT_DB, help=f"Chroma DB directory. Default: {DEFAULT_DB}")
     parser.add_argument("--collection", default=DEFAULT_COLLECTION, help=f"Chroma collection. Default: {DEFAULT_COLLECTION}")
     parser.add_argument("--embed-model", default=DEFAULT_EMBED_MODEL, help=f"Ollama embedding model. Default: {DEFAULT_EMBED_MODEL}")
@@ -85,6 +106,7 @@ def main() -> None:
 
     run_watch(
         repos=args.repo,
+        workspaces=args.workspace,
         db=args.db,
         collection_name=args.collection,
         embed_model=args.embed_model,
