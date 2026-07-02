@@ -40,6 +40,7 @@
 
             pythonImportsCheck = [
               "local_code_rag.index_repos"
+              "local_code_rag.mcp_server"
               "local_code_rag.query"
               "local_code_rag.watch_repos"
             ];
@@ -63,6 +64,7 @@
         {
           default = app "code-rag-query";
           index = app "code-rag-index";
+          mcp = app "code-rag-mcp";
           query = app "code-rag-query";
           watch = app "code-rag-watch";
         });

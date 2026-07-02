@@ -35,6 +35,7 @@ Run commands directly from the flake:
 nix run .#index -- --workspace /path/to/code --db ./codebase_index
 nix run .#query -- --db ./codebase_index --q "Where is retry handled?"
 nix run .#watch -- --workspace /path/to/code --db ./codebase_index
+nix run .#mcp -- --db ./codebase_index
 ```
 
 Install from another flake by adding this repo as an input and using
@@ -107,6 +108,20 @@ The `code-ai-*` aliases manage both services: they start Ollama first and the
 RAG watcher second, then stop the watcher before stopping Ollama. The
 `code-rag-*` aliases only manage the watcher, and `ollama-*` aliases only
 manage Ollama.
+
+The MCP server is separate from the watcher. It reads the same Chroma DB and
+serves retrieval over stdio so Claude Code or another MCP client can ask for
+repo context before reasoning with an Ollama-backed model. Start it with:
+
+```bash
+code-rag-mcp --db ./codebase_index
+```
+
+or via Nix:
+
+```bash
+nix run .#mcp -- --db ./codebase_index
+```
 
 By default, the module installs the `ollama` CLI but assumes the Ollama daemon
 is configured elsewhere, for example with NixOS `services.ollama`. Set
@@ -205,3 +220,6 @@ or any custom DB directory that contains an index of private code.
 By default, embeddings and chat requests go to a local Ollama endpoint at
 `http://localhost:11434`. The tool does not call a hosted model API unless you
 explicitly point `--ollama-url` at one.
+
+The MCP server does not start Ollama. It expects the daemon to already be
+running, either under this module, NixOS, or a separate local service.

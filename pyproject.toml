@@ -15,6 +15,7 @@ dependencies = [
 code-rag-index = "local_code_rag.index_repos:main"
 code-rag-query = "local_code_rag.query:main"
 code-rag-watch = "local_code_rag.watch_repos:main"
+code-rag-mcp = "local_code_rag.mcp_server:main"
 
 [build-system]
 requires = ["setuptools>=68"]
