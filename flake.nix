@@ -120,7 +120,7 @@
           };
         });
 
-      nixosModules.default = { config, lib, pkgs, ... }:
+      homeManagerModules.default = { config, lib, pkgs, ... }:
         let
           cfg = config.services.local-code-rag;
           package = cfg.package;
@@ -133,6 +133,17 @@
             "--ollama-url ${lib.escapeShellArg cfg.ollamaUrl}"
             "--debounce-seconds ${toString cfg.debounceSeconds}"
           ] ++ lib.optional (!cfg.initialIndex) "--no-initial-index");
+          environmentList = lib.mapAttrsToList (name: value: "${name}=${value}") (cfg.environment // {
+            OLLAMA_HOST = lib.removePrefix "http://" (lib.removePrefix "https://" cfg.ollamaUrl);
+          });
+          systemctl =
+            if cfg.ollamaServiceScope == "user"
+            then "systemctl --user"
+            else "sudo systemctl";
+          systemctlStatus =
+            if cfg.ollamaServiceScope == "user"
+            then "systemctl --user"
+            else "systemctl";
         in
         {
           options.services.local-code-rag = {
@@ -157,8 +168,8 @@
 
             db = lib.mkOption {
               type = lib.types.str;
-              default = "/var/lib/local-code-rag/codebase_index";
-              example = "/home/your-user/.local/share/local-code-rag/codebase_index";
+              default = "${config.home.homeDirectory}/.local/share/local-code-rag/codebase_index";
+              defaultText = lib.literalExpression ''"''${config.home.homeDirectory}/.local/share/local-code-rag/codebase_index"'';
               description = "Persistent Chroma database directory.";
             };
 
@@ -180,6 +191,37 @@
               description = "Ollama HTTP API base URL.";
             };
 
+            ollamaPackage = lib.mkOption {
+              type = lib.types.package;
+              default = pkgs.ollama;
+              defaultText = lib.literalExpression "pkgs.ollama";
+              description = "Ollama package to install into the Home Manager profile.";
+            };
+
+            installOllama = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "Install the Ollama CLI into the Home Manager profile.";
+            };
+
+            ollamaServiceName = lib.mkOption {
+              type = lib.types.str;
+              default = "ollama";
+              description = "Systemd service name for the Ollama daemon.";
+            };
+
+            ollamaServiceScope = lib.mkOption {
+              type = lib.types.enum [ "system" "user" ];
+              default = "system";
+              description = "Whether aliases target a system or user Ollama service.";
+            };
+
+            manageOllama = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Create a Home Manager user service for `ollama serve`. Leave disabled if Ollama is configured elsewhere.";
+            };
+
             debounceSeconds = lib.mkOption {
               type = lib.types.number;
               default = 5;
@@ -195,27 +237,13 @@
             autoStart = lib.mkOption {
               type = lib.types.bool;
               default = false;
-              description = "Start the watcher at boot. Disabled by default so Ollama is only used when explicitly started.";
-            };
-
-            user = lib.mkOption {
-              type = lib.types.str;
-              default = "root";
-              example = "your-user";
-              description = "User that runs the watcher service.";
-            };
-
-            group = lib.mkOption {
-              type = lib.types.str;
-              default = "root";
-              example = "users";
-              description = "Group that runs the watcher service.";
+              description = "Start the watcher when the user systemd manager starts.";
             };
 
             workingDirectory = lib.mkOption {
               type = lib.types.str;
-              default = "/";
-              example = "/home/your-user/code";
+              default = config.home.homeDirectory;
+              defaultText = lib.literalExpression "config.home.homeDirectory";
               description = "Working directory for the watcher service.";
             };
 
@@ -227,6 +255,12 @@
               };
               description = "Additional environment variables for the watcher service.";
             };
+
+            shellAliases = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "Add shell aliases for managing Ollama and the Home Manager user service.";
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -237,33 +271,63 @@
               }
             ];
 
-            environment.systemPackages = [
+            home.packages = [
               package
-            ];
+            ] ++ lib.optional cfg.installOllama cfg.ollamaPackage;
 
-            systemd.services.local-code-rag-watch = {
-              description = "Local code RAG Chroma index watcher";
-              after = [
-                "network-online.target"
-                "ollama.service"
-              ];
-              wants = [
-                "network-online.target"
-              ];
-              wantedBy = lib.optional cfg.autoStart "multi-user.target";
-              environment = cfg.environment // {
-                OLLAMA_HOST = lib.removePrefix "http://" (lib.removePrefix "https://" cfg.ollamaUrl);
+            systemd.user.services.local-code-rag-watch = {
+              Unit = {
+                Description = "Local code RAG Chroma index watcher";
+                After = [
+                  "network-online.target"
+                  "${cfg.ollamaServiceName}.service"
+                ];
               };
 
-              serviceConfig = {
+              Service = {
                 Type = "simple";
-                User = cfg.user;
-                Group = cfg.group;
                 WorkingDirectory = cfg.workingDirectory;
                 ExecStart = "${package}/bin/code-rag-watch ${watchArgs}";
+                Environment = environmentList;
                 Restart = "on-failure";
                 RestartSec = "10s";
               };
+
+              Install = lib.mkIf cfg.autoStart {
+                WantedBy = [ "default.target" ];
+              };
+            };
+
+            systemd.user.services.${cfg.ollamaServiceName} = lib.mkIf cfg.manageOllama {
+              Unit = {
+                Description = "Ollama local model server";
+                After = [ "network-online.target" ];
+              };
+
+              Service = {
+                Type = "simple";
+                ExecStart = "${cfg.ollamaPackage}/bin/ollama serve";
+                Environment = environmentList;
+                Restart = "on-failure";
+                RestartSec = "10s";
+              };
+
+              Install = lib.mkIf cfg.autoStart {
+                WantedBy = [ "default.target" ];
+              };
+            };
+
+            home.shellAliases = lib.mkIf cfg.shellAliases {
+              ollama-up = "${systemctl} start ${cfg.ollamaServiceName}";
+              ollama-down = "${systemctl} stop ${cfg.ollamaServiceName}";
+              ollama-status = "${systemctlStatus} status ${cfg.ollamaServiceName} --no-pager --lines=12";
+              code-ai-up = "${systemctl} start ${cfg.ollamaServiceName} && systemctl --user start local-code-rag-watch";
+              code-ai-down = "systemctl --user stop local-code-rag-watch; ${systemctl} stop ${cfg.ollamaServiceName}";
+              code-ai-status = "${systemctlStatus} status ${cfg.ollamaServiceName} --no-pager --lines=8; systemctl --user status local-code-rag-watch --no-pager --lines=8";
+              code-rag-up = "systemctl --user start local-code-rag-watch";
+              code-rag-status = "systemctl --user status local-code-rag-watch";
+              code-rag-down = "systemctl --user stop local-code-rag-watch";
+              code-rag-logs = "journalctl --user -u local-code-rag-watch -f";
             };
           };
         };

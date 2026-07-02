@@ -40,7 +40,7 @@ nix run .#watch -- --repo /path/to/service-a --db ./codebase_index
 Install from another flake by adding this repo as an input and using
 `inputs.local-code-rag.packages.${system}.default`.
 
-The flake also exports a NixOS module:
+The flake also exports a Home Manager module:
 
 ```nix
 {
@@ -48,42 +48,70 @@ The flake also exports a NixOS module:
 }
 ```
 
-Then import and configure it from your NixOS configuration:
+Pass `inputs` to Home Manager and import the module from `home.nix`:
 
 ```nix
 { inputs, ... }:
 
 {
   imports = [
-    inputs.local-code-rag.nixosModules.default
+    inputs.local-code-rag.homeManagerModules.default
   ];
 
   services.local-code-rag = {
     enable = true;
-    user = "your-user";
-    group = "users";
     repos = [
       "/home/your-user/code/service-a"
       "/home/your-user/code/service-b"
     ];
     db = "/home/your-user/.local/share/local-code-rag/codebase_index";
-    collection = "code_chunks";
-    embedModel = "nomic-embed-text";
     ollamaUrl = "http://127.0.0.1:11434";
 
     # Keep this false if you only want the watcher running when you start it.
     autoStart = false;
+
+    # Default: install the Ollama CLI, but use an existing system Ollama service.
+    installOllama = true;
+    ollamaServiceScope = "system";
+    manageOllama = false;
   };
 }
 ```
 
-With `autoStart = false`, start it manually when Ollama is running:
+With `autoStart = false`, start it manually as a user service:
 
 ```bash
-sudo systemctl start local-code-rag-watch
-sudo systemctl status local-code-rag-watch
-sudo systemctl stop local-code-rag-watch
+systemctl --user start local-code-rag-watch
+systemctl --user status local-code-rag-watch
+systemctl --user stop local-code-rag-watch
 ```
+
+The Home Manager module also adds shell aliases by default:
+
+```bash
+ollama-up
+ollama-status
+ollama-down
+code-ai-up
+code-ai-status
+code-ai-down
+code-rag-up
+code-rag-status
+code-rag-down
+code-rag-logs
+```
+
+The `code-ai-*` aliases manage both services: they start Ollama first and the
+RAG watcher second, then stop the watcher before stopping Ollama. The
+`code-rag-*` aliases only manage the watcher, and `ollama-*` aliases only
+manage Ollama.
+
+By default, the module installs the `ollama` CLI but assumes the Ollama daemon
+is configured elsewhere, for example with NixOS `services.ollama`. Set
+`ollamaServiceScope = "user";` and `manageOllama = true;` only if you want this
+Home Manager module to create a user service running `ollama serve`.
+
+Set `services.local-code-rag.shellAliases = false;` to skip them.
 
 If you are running in a Nix shell and Chroma/NumPy fails to import with missing
 shared libraries such as `libstdc++.so.6` or `libz.so.1`, enter the provided
@@ -93,17 +121,6 @@ shell first:
 nix-shell
 uv sync
 ```
-
-The Nix shell also provides helpers for a systemd-managed Ollama service:
-
-```bash
-ollama-up        # sudo systemctl start ollama
-ollama-status    # service state plus recent logs
-ollama-down      # sudo systemctl stop ollama
-```
-
-This keeps Ollama off your GPU until you explicitly start it for a code-RAG
-session.
 
 ## Usage
 
