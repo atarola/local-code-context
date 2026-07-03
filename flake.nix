@@ -5,7 +5,8 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
-  outputs = { self, nixpkgs }:
+  outputs =
+    { self, nixpkgs }:
     let
       systems = [
         "x86_64-linux"
@@ -15,7 +16,8 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
     {
-      packages = forAllSystems (system:
+      packages = forAllSystems (
+        system:
         let
           pkgs = import nixpkgs { inherit system; };
           py = pkgs.python313Packages;
@@ -51,9 +53,11 @@
               mainProgram = "code-rag-query";
             };
           };
-        });
+        }
+      );
 
-      apps = forAllSystems (system:
+      apps = forAllSystems (
+        system:
         let
           package = self.packages.${system}.default;
           app = program: {
@@ -67,9 +71,11 @@
           mcp = app "code-rag-mcp";
           query = app "code-rag-query";
           watch = app "code-rag-watch";
-        });
+        }
+      );
 
-      devShells = forAllSystems (system:
+      devShells = forAllSystems (
+        system:
         let
           pkgs = import nixpkgs { inherit system; };
         in
@@ -77,7 +83,7 @@
           default = pkgs.mkShell {
             packages = [
               pkgs.curl
-              pkgs.ollama
+              pkgs.ollama-cuda
               pkgs.uv
               pkgs.zlib
               pkgs.gcc.cc.lib
@@ -120,34 +126,43 @@
               echo "Ollama helpers: ollama-up, ollama-status, ollama-down"
             '';
           };
-        });
+        }
+      );
 
-      homeManagerModules.default = { config, lib, pkgs, ... }:
+      homeManagerModules.default =
+        {
+          config,
+          lib,
+          pkgs,
+          ...
+        }:
         let
           cfg = config.services.local-code-rag;
           package = cfg.package;
           repoArgs = lib.concatMapStringsSep " " (repo: "--repo ${lib.escapeShellArg repo}") cfg.repos;
-          workspaceArgs = lib.concatMapStringsSep " " (workspace: "--workspace ${lib.escapeShellArg workspace}") cfg.workspaces;
-          watchArgs = lib.concatStringsSep " " ([
-            repoArgs
-            workspaceArgs
-            "--db ${lib.escapeShellArg cfg.db}"
-            "--collection ${lib.escapeShellArg cfg.collection}"
-            "--embed-model ${lib.escapeShellArg cfg.embedModel}"
-            "--ollama-url ${lib.escapeShellArg cfg.ollamaUrl}"
-            "--debounce-seconds ${toString cfg.debounceSeconds}"
-          ] ++ lib.optional (!cfg.initialIndex) "--no-initial-index");
-          environmentList = lib.mapAttrsToList (name: value: "${name}=${value}") (cfg.environment // {
-            OLLAMA_HOST = lib.removePrefix "http://" (lib.removePrefix "https://" cfg.ollamaUrl);
-          });
-          systemctl =
-            if cfg.ollamaServiceScope == "user"
-            then "systemctl --user"
-            else "sudo systemctl";
-          systemctlStatus =
-            if cfg.ollamaServiceScope == "user"
-            then "systemctl --user"
-            else "systemctl";
+          workspaceArgs = lib.concatMapStringsSep " " (
+            workspace: "--workspace ${lib.escapeShellArg workspace}"
+          ) cfg.workspaces;
+          watchArgs = lib.concatStringsSep " " (
+            [
+              repoArgs
+              workspaceArgs
+              "--db ${lib.escapeShellArg cfg.db}"
+              "--collection ${lib.escapeShellArg cfg.collection}"
+              "--embed-model ${lib.escapeShellArg cfg.embedModel}"
+              "--ollama-url ${lib.escapeShellArg cfg.ollamaUrl}"
+              "--debounce-seconds ${toString cfg.debounceSeconds}"
+            ]
+            ++ lib.optional (!cfg.initialIndex) "--no-initial-index"
+          );
+          environmentList = lib.mapAttrsToList (name: value: "${name}=${value}") (
+            cfg.environment
+            // {
+              OLLAMA_HOST = lib.removePrefix "http://" (lib.removePrefix "https://" cfg.ollamaUrl);
+            }
+          );
+          systemctl = if cfg.ollamaServiceScope == "user" then "systemctl --user" else "sudo systemctl";
+          systemctlStatus = if cfg.ollamaServiceScope == "user" then "systemctl --user" else "systemctl";
         in
         {
           options.services.local-code-rag = {
@@ -224,7 +239,10 @@
             };
 
             ollamaServiceScope = lib.mkOption {
-              type = lib.types.enum [ "system" "user" ];
+              type = lib.types.enum [
+                "system"
+                "user"
+              ];
               default = "system";
               description = "Whether aliases target a system or user Ollama service.";
             };
@@ -286,7 +304,8 @@
 
             home.packages = [
               package
-            ] ++ lib.optional cfg.installOllama cfg.ollamaPackage;
+            ]
+            ++ lib.optional cfg.installOllama cfg.ollamaPackage;
 
             systemd.user.services.local-code-rag-watch = {
               Unit = {
@@ -334,9 +353,9 @@
               ollama-up = "${systemctl} start ${cfg.ollamaServiceName}";
               ollama-down = "${systemctl} stop ${cfg.ollamaServiceName}";
               ollama-status = "${systemctlStatus} status ${cfg.ollamaServiceName} --no-pager --lines=12";
-              code-ai-up = "${systemctl} start ${cfg.ollamaServiceName} && systemctl --user start local-code-rag-watch";
-              code-ai-down = "systemctl --user stop local-code-rag-watch; ${systemctl} stop ${cfg.ollamaServiceName}";
-              code-ai-status = "${systemctlStatus} status ${cfg.ollamaServiceName} --no-pager --lines=8; systemctl --user status local-code-rag-watch --no-pager --lines=8";
+              code-up = "${systemctl} start ${cfg.ollamaServiceName} && systemctl --user start local-code-rag-watch";
+              code-down = "systemctl --user stop local-code-rag-watch; ${systemctl} stop ${cfg.ollamaServiceName}";
+              code-status = "${systemctlStatus} status ${cfg.ollamaServiceName} --no-pager --lines=8; systemctl --user status local-code-rag-watch --no-pager --lines=8";
               code-rag-up = "systemctl --user start local-code-rag-watch";
               code-rag-status = "systemctl --user status local-code-rag-watch";
               code-rag-down = "systemctl --user stop local-code-rag-watch";
