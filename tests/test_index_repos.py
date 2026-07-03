@@ -114,6 +114,11 @@ class FlakyMemoryCollection(MemoryCollection):
         super().add(**kwargs)
 
 
+def _fake_embeddings(texts, model, base_url):  # noqa: ANN001
+    del model, base_url
+    return [[float(index) + 0.1] for index, _ in enumerate(texts)]
+
+
 def _record_ids_for_path(
     collection: MemoryCollection, repo: str, rel_path: str
 ) -> set[str]:
@@ -259,7 +264,7 @@ class IndexRepoTests(unittest.TestCase):
 
             with patch(
                 "local_code_rag.index_repos.ollama_embed",
-                return_value=[[0.1]],
+                side_effect=_fake_embeddings,
             ):
                 index_repos.index_file(
                     collection=collection,
@@ -281,7 +286,7 @@ class IndexRepoTests(unittest.TestCase):
             collection.fail_next_add = True
             with patch(
                 "local_code_rag.index_repos.ollama_embed",
-                return_value=[[0.2]],
+                side_effect=_fake_embeddings,
             ):
                 changed = index_repos.index_file(
                     collection=collection,
@@ -314,7 +319,7 @@ class IndexRepoTests(unittest.TestCase):
 
             with patch(
                 "local_code_rag.index_repos.ollama_embed",
-                return_value=[[0.1]],
+                side_effect=_fake_embeddings,
             ):
                 index_repos.index_file(
                     collection=collection,

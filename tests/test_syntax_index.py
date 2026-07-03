@@ -241,6 +241,23 @@ class SyntaxIndexTests(unittest.TestCase):
         self.assertIs(second, fake_parser)
         self.assertEqual(build.call_count, 1)
 
+    def test_parser_registry_retains_language(self) -> None:
+        fake_parser = FakeParser(_sample_tree())
+        fake_language = object()
+        registry = ParserRegistry()
+        with patch(
+            "local_code_rag.tree_sitter_support._build_python_parser",
+            return_value=fake_parser,
+        ), patch(
+            "local_code_rag.tree_sitter_support._build_python_language",
+            return_value=fake_language,
+        ):
+            parser = registry.get("python")
+            language = registry.get_language("python")
+
+        self.assertIs(parser, fake_parser)
+        self.assertIs(language, fake_language)
+
     def test_unavailable_parser_falls_back_to_text(self) -> None:
         source = _sample_source().encode("utf-8")
         registry = FakeRegistry(None)
@@ -311,6 +328,34 @@ class SyntaxIndexTests(unittest.TestCase):
         self.assertIn("definition.class", query)
         self.assertIn("definition.function", query)
         self.assertIn("reference.call", query)
+
+    def test_live_python_query_execution(self) -> None:
+        try:
+            from tree_sitter import Language, Parser, Query, QueryCursor
+            import tree_sitter_python
+        except Exception as exc:  # pragma: no cover - runtime dependency guard
+            self.skipTest(f"tree-sitter runtime unavailable: {exc}")
+
+        source = _sample_source().encode("utf-8")
+        lang = Language(tree_sitter_python.language())
+        parser = Parser()
+        parser.language = lang
+        tree = parser.parse(source)
+        query = Query(lang, load_python_tags_query())
+        cursor = QueryCursor(query)
+        raw = cursor.captures(tree.root_node)
+
+        self.assertIsInstance(raw, dict)
+        self.assertIn("definition.class", raw)
+        self.assertIn("definition.function", raw)
+        self.assertIn("reference.import", raw)
+        self.assertIn("definition.method", raw)
+        self.assertIn("name", raw)
+
+        extractor = PythonTagQueryExtractor()
+        result = extractor.extract(source, tree, "demo.py")
+        self.assertTrue(result.symbols)
+        self.assertTrue(result.imports)
 
     def test_generic_query_extractor_matches_legacy_fixture(self) -> None:
         source = _sample_source().encode("utf-8")

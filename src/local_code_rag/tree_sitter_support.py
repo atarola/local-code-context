@@ -32,11 +32,10 @@ def _set_parser_language(parser: Any, language: Any) -> bool:
     return False
 
 
-def _build_python_parser() -> Any | None:
-    if Parser is None or tree_sitter_python is None:
+def _build_python_language() -> Any | None:
+    if tree_sitter_python is None:
         return None
 
-    parser = Parser()
     language_factory = getattr(tree_sitter_python, "language", None)
     if language_factory is None:
         return None
@@ -52,6 +51,17 @@ def _build_python_parser() -> Any | None:
             language = Language(language)
         except Exception:
             pass
+    return language
+
+
+def _build_python_parser() -> Any | None:
+    if Parser is None or tree_sitter_python is None:
+        return None
+
+    parser = Parser()
+    language = _build_python_language()
+    if language is None:
+        return None
 
     if not _set_parser_language(parser, language):
         return None
@@ -61,6 +71,7 @@ def _build_python_parser() -> Any | None:
 @dataclass
 class ParserRegistry:
     _parsers: dict[str, Any | None] = field(default_factory=dict)
+    _languages: dict[str, Any | None] = field(default_factory=dict)
 
     def get(self, language: str) -> Any | None:
         key = language.lower()
@@ -68,24 +79,41 @@ class ParserRegistry:
             return self._parsers[key]
 
         parser: Any | None
+        parser_language: Any | None = None
         if key == "python":
             try:
-                parser = _build_python_parser()
+                built = _build_python_parser()
             except Exception as exc:  # pragma: no cover - defensive
                 print(
                     f"failed to load tree-sitter parser for python: {exc}",
                     file=sys.stderr,
                 )
                 parser = None
+            else:
+                if isinstance(built, tuple) and len(built) == 2:
+                    parser, parser_language = built
+                else:
+                    parser = built
+                    if parser is not None:
+                        parser_language = _build_python_language()
         else:
             parser = None
 
         if parser is None:
             self._parsers[key] = None
+            self._languages[key] = None
             return None
 
         self._parsers[key] = parser
+        self._languages[key] = parser_language
         return parser
+
+    def get_language(self, language: str) -> Any | None:
+        key = language.lower()
+        if key in self._languages:
+            return self._languages[key]
+        self.get(language)
+        return self._languages.get(key)
 
 
 _DEFAULT_PARSER_REGISTRY = ParserRegistry()

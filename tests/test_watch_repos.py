@@ -102,6 +102,11 @@ class ChangeStub:
         self.name = name
 
 
+def _fake_embeddings(texts, model, base_url):  # noqa: ANN001
+    del model, base_url
+    return [[float(index) + 0.1] for index, _ in enumerate(texts)]
+
+
 class WatchRepoTests(unittest.TestCase):
     def test_process_changes_updates_only_one_repository(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -120,7 +125,7 @@ class WatchRepoTests(unittest.TestCase):
 
             with patch(
                 "local_code_rag.index_repos.ollama_embed",
-                return_value=[[0.1]],
+                side_effect=_fake_embeddings,
             ):
                 index_repos.index_file(
                     collection=collection,
@@ -150,7 +155,7 @@ class WatchRepoTests(unittest.TestCase):
 
             with patch(
                 "local_code_rag.index_repos.ollama_embed",
-                return_value=[[0.2]],
+                side_effect=_fake_embeddings,
             ):
                 counts = watch_repos._process_changes(  # noqa: SLF001
                     changes={(ChangeStub("modified"), str(file_a))},
@@ -182,7 +187,7 @@ class WatchRepoTests(unittest.TestCase):
 
             with patch(
                 "local_code_rag.index_repos.ollama_embed",
-                return_value=[[0.1]],
+                side_effect=_fake_embeddings,
             ):
                 index_repos.index_file(
                     collection=collection,
@@ -198,7 +203,7 @@ class WatchRepoTests(unittest.TestCase):
 
             with patch(
                 "local_code_rag.index_repos.ollama_embed",
-                return_value=[[0.2]],
+                side_effect=_fake_embeddings,
             ):
                 counts = watch_repos._process_changes(  # noqa: SLF001
                     changes={

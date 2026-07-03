@@ -50,7 +50,7 @@ SYMBOL_KIND_PRIORITY = {
 
 
 class CaptureSource(Protocol):
-    def captures(self, tree: Any) -> Iterable[tuple[str, Any]]: ...
+    def captures(self, tree: Any) -> Any: ...
 
 
 @lru_cache(maxsize=None)
@@ -203,7 +203,7 @@ def _capture_pairs(
 ) -> list[tuple[str, Any]]:
     if capture_source is None:
         return []
-    return list(capture_source.captures(tree))
+    return _normalize_capture_pairs(capture_source.captures(tree))
 
 
 def _normalize_capture_pairs(raw: Any) -> list[tuple[str, Any]]:
@@ -249,39 +249,18 @@ def _compile_python_capture_source() -> CaptureSource | None:
             root = getattr(tree, "root_node", None)
             if root is None:
                 return []
-            raw = None
-            if hasattr(compiled_query, "captures"):
-                try:
-                    raw = compiled_query.captures(root)
-                except Exception as exc:
-                    print(
-                        f"failed to run Python tags query: {exc}",
-                        file=sys.stderr,
-                    )
-                    return []
-            elif hasattr(compiled_query, "matches"):
-                try:
-                    raw = compiled_query.matches(root)
-                except Exception as exc:
-                    print(
-                        f"failed to run Python tags query: {exc}",
-                        file=sys.stderr,
-                    )
-                    return []
-            elif QueryCursor is not None:
-                try:
-                    cursor = QueryCursor()
-                    if hasattr(cursor, "captures"):
-                        raw = cursor.captures(compiled_query, root)
-                    elif hasattr(cursor, "matches"):
-                        raw = cursor.matches(compiled_query, root)
-                except Exception as exc:
-                    print(
-                        f"failed to run Python tags query: {exc}",
-                        file=sys.stderr,
-                    )
-                    return []
-            return _normalize_capture_pairs(raw)
+            if QueryCursor is None:
+                return []
+            try:
+                cursor = QueryCursor(compiled_query)
+                raw = cursor.captures(root)
+            except Exception as exc:
+                print(
+                    f"failed to run Python tags query: {exc}",
+                    file=sys.stderr,
+                )
+                return []
+            return raw
 
     return _RuntimeCaptureSource()
 
