@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import fnmatch
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -131,12 +132,37 @@ def file_key(repo: str, rel_path: str) -> str:
     return f"{repo}:{rel_path}"
 
 
-def should_skip_path(path: Path) -> bool:
+def load_index_ignore(repo: Path) -> list[str]:
+    path = repo / ".index_ignore"
+    if not path.exists():
+        return []
+
+    patterns: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        patterns.append(stripped)
+    return patterns
+
+
+def matches_index_ignore(rel_path: Path, patterns: list[str]) -> bool:
+    text = rel_path.as_posix()
+    name = rel_path.name
+    for pattern in patterns:
+        if fnmatch.fnmatchcase(text, pattern) or fnmatch.fnmatchcase(name, pattern):
+            return True
+    return False
+
+
+def should_skip_path(path: Path, ignore_patterns: list[str] | None = None) -> bool:
     return (
         any(part in SKIP_DIRS for part in path.parts)
         or any(part.endswith(".egg-info") for part in path.parts)
-        or path.name in {".DS_Store", ".gitignore"}
+        or path.name in {".DS_Store", ".gitignore", ".index_ignore"}
         or path.suffix.lower() in SKIP_SUFFIXES
+        or any(part.endswith(":Zone.Identifier") for part in path.parts)
+        or matches_index_ignore(path, ignore_patterns or [])
     )
 
 
@@ -163,16 +189,17 @@ def git_list_files(repo: Path) -> list[Path] | None:
 
 
 def iter_files(repo: Path) -> list[Path]:
+    ignore_patterns = load_index_ignore(repo)
     git_files = git_list_files(repo)
     if git_files is not None:
-        return git_files
+        return [path for path in git_files if not should_skip_path(path.relative_to(repo), ignore_patterns)]
 
     files: list[Path] = []
     for path in repo.rglob("*"):
         if not path.is_file():
             continue
         rel = path.relative_to(repo)
-        if should_skip_path(rel):
+        if should_skip_path(rel, ignore_patterns):
             continue
         files.append(path)
     return sorted(files)

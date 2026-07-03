@@ -162,7 +162,9 @@ and deleted files are reflected in Chroma.
 
 The indexer also skips common cache and build directories by default, including
 `.git`, `.venv`, `.uv-cache`, `.cache`, `node_modules`, `build`, `dist`,
-`.gitignore`, and package metadata directories ending in `.egg-info`.
+`.gitignore`, `.index_ignore`, package metadata directories ending in
+`.egg-info`, and files or directories matched by a repo-local `.index_ignore`
+file.
 For git repositories, files ignored by `.gitignore` are excluded automatically.
 
 Use `--force` to ignore the manifest and re-embed everything, for example after
