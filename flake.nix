@@ -37,13 +37,21 @@
             dependencies = [
               py.chromadb
               py.requests
+              py."tree-sitter"
+              py."tree-sitter-python"
               py.watchfiles
             ];
 
             pythonImportsCheck = [
+              "local_code_rag.languages"
               "local_code_rag.index_repos"
               "local_code_rag.mcp_server"
+              "local_code_rag.python_syntax"
+              "local_code_rag.syntax_chunks"
+              "local_code_rag.syntax_models"
+              "local_code_rag.syntax_index"
               "local_code_rag.query"
+              "local_code_rag.tree_sitter_support"
               "local_code_rag.watch_repos"
             ];
 

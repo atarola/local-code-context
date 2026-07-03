@@ -211,6 +211,10 @@ class IndexRepoTests(unittest.TestCase):
             self.assertTrue(before_second)
             original_first_ids = _record_ids_for_path(collection, "demo", "first.py")
             self.assertTrue(original_first_ids)
+            original_first_documents = {
+                record_id: collection.records[record_id]["document"]
+                for record_id in original_first_ids
+            }
 
             first.write_text("def first():\n    return 10\n", encoding="utf-8")
             with patch(
@@ -235,9 +239,14 @@ class IndexRepoTests(unittest.TestCase):
             self.assertEqual(
                 _record_ids_for_path(collection, "demo", "second.py"), before_second
             )
-            self.assertFalse(
-                original_first_ids
-                & _record_ids_for_path(collection, "demo", "first.py")
+            current_first_ids = _record_ids_for_path(collection, "demo", "first.py")
+            self.assertEqual(current_first_ids, original_first_ids)
+            self.assertTrue(
+                any(
+                    collection.records[record_id]["document"]
+                    != original_first_documents[record_id]
+                    for record_id in current_first_ids
+                )
             )
 
     def test_index_file_restores_previous_records_on_add_failure(self) -> None:

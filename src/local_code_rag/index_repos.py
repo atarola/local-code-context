@@ -9,9 +9,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from local_code_rag.syntax_index import INDEX_SCHEMA_VERSION, build_index_records
+from local_code_rag.syntax_chunks import CHUNK_LINES, CHUNK_OVERLAP, chunk_text
 
-CHUNK_LINES = 60
-CHUNK_OVERLAP = 10
+
 DEFAULT_DB = "./codebase_index"
 DEFAULT_COLLECTION = "code_chunks"
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
@@ -241,23 +242,6 @@ def content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def chunk_text(text: str) -> list[tuple[int, int, str]]:
-    lines = text.splitlines()
-    if not lines:
-        return []
-
-    chunks: list[tuple[int, int, str]] = []
-    step = max(1, CHUNK_LINES - CHUNK_OVERLAP)
-    for start in range(0, len(lines), step):
-        end = min(start + CHUNK_LINES, len(lines))
-        chunk = "\n".join(lines[start:end]).strip()
-        if chunk:
-            chunks.append((start + 1, end, chunk))
-        if end == len(lines):
-            break
-    return chunks
-
-
 def ollama_embed(texts: list[str], model: str, base_url: str) -> list[list[float]]:
     import requests
 
@@ -370,38 +354,33 @@ def index_file(
     text = read_text(path)
     if text is None:
         return False
+    try:
+        source = path.read_bytes()
+    except OSError as exc:
+        print(f"skip unreadable: {path} ({exc})")
+        return False
 
     digest = content_hash(text)
     existing = manifest["files"].get(key)
     if not force and existing and existing.get("hash") == digest:
         return False
 
-    chunks = chunk_text(text)
-    if not chunks:
+    build_result = build_index_records(
+        repo=repo,
+        repo_root=repo_root,
+        path=path,
+        source=source,
+        text=text,
+    )
+    records = build_result.records
+    if not records:
         _delete_path_records(collection, manifest, repo, rel_path)
         return True
 
-    ids: list[str] = []
-    documents: list[str] = []
-    metadatas: list[dict[str, Any]] = []
+    ids: list[str] = [record.id for record in records]
+    documents: list[str] = [record.document for record in records]
+    metadatas: list[dict[str, Any]] = [record.metadata for record in records]
     embeddings: list[list[float]] = []
-    for index, (start_line, end_line, chunk) in enumerate(chunks):
-        chunk_id = hashlib.sha256(
-            f"{repo}:{rel_path}:{digest}:{index}".encode("utf-8")
-        ).hexdigest()
-        ids.append(chunk_id)
-        documents.append(chunk)
-        metadatas.append(
-            {
-                "repo": repo,
-                "repo_root": str(repo_root),
-                "path": rel_path,
-                "start_line": start_line,
-                "end_line": end_line,
-                "file_hash": digest,
-            }
-        )
-
     for start in range(0, len(documents), EMBED_BATCH_SIZE):
         batch = documents[start : start + EMBED_BATCH_SIZE]
         batch_embeddings = ollama_embed(batch, embed_model, ollama_url)
@@ -444,6 +423,7 @@ def index_file(
         "chunk_lines": CHUNK_LINES,
         "chunk_overlap": CHUNK_OVERLAP,
         "embed_model": embed_model,
+        "index_schema_version": INDEX_SCHEMA_VERSION,
     }
     return True
 

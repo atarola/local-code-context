@@ -1,0 +1,274 @@
+from __future__ import annotations
+
+from typing import Any
+
+from local_code_rag.languages import detect_language
+from local_code_rag.python_syntax import (
+    PythonSyntaxExtractor,
+    extract_python_imports,
+    extract_python_symbols,
+)
+from local_code_rag.syntax_chunks import (
+    MAX_SIGNATURE_CHARS,
+    build_structural_records,
+    build_text_fallback_records,
+    make_chunk_id,
+)
+from local_code_rag.syntax_models import (
+    BuildResult,
+    CodeImport,
+    CodeSymbol,
+    ExtractionResult,
+    INDEX_SCHEMA_VERSION,
+    IndexRecord,
+    LanguageExtractor,
+    ParseQuality,
+)
+from local_code_rag.tree_sitter_support import ParserRegistry, get_parser_registry
+
+try:  # pragma: no cover - optional dependency
+    from tree_sitter import Tree
+except Exception:  # pragma: no cover - optional dependency
+    Tree = Any  # type: ignore[assignment]
+
+
+MAX_PARSE_ERROR_RATIO = 0.35
+
+EXTRACTORS: dict[str, LanguageExtractor] = {
+    "python": PythonSyntaxExtractor(),
+}
+
+
+def walk_tree(node: Any):
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        yield current
+        children = list(getattr(current, "children", []) or [])
+        stack.extend(reversed(children))
+
+
+def _count_missing_nodes(node: Any) -> int:
+    return sum(1 for child in walk_tree(node) if getattr(child, "is_missing", False))
+
+
+def _count_error_nodes(node: Any) -> int:
+    return sum(1 for child in walk_tree(node) if getattr(child, "type", "") == "ERROR")
+
+
+def _error_bytes(node: Any) -> int:
+    total = 0
+    for child in walk_tree(node):
+        if getattr(child, "type", "") == "ERROR" or getattr(child, "is_missing", False):
+            total += max(
+                0,
+                int(getattr(child, "end_byte", 0))
+                - int(getattr(child, "start_byte", 0)),
+            )
+    return total
+
+
+def _has_meaningful_top_level_nodes(root: Any) -> bool:
+    children = list(
+        getattr(root, "named_children", []) or getattr(root, "children", []) or []
+    )
+    for child in children:
+        if getattr(child, "type", "") not in {"ERROR", "comment"}:
+            return True
+    return False
+
+
+def evaluate_parse_quality(tree: Any, source: bytes) -> ParseQuality:
+    root = getattr(tree, "root_node", None)
+    if root is None:
+        return ParseQuality(False, 0, 0, len(source), 1.0 if source else 0.0)
+
+    error_nodes = _count_error_nodes(root)
+    missing_nodes = _count_missing_nodes(root)
+    error_bytes = min(len(source), _error_bytes(root))
+    error_ratio = error_bytes / len(source) if source else 0.0
+    usable = (
+        error_ratio <= MAX_PARSE_ERROR_RATIO
+        and _has_meaningful_top_level_nodes(root)
+        and (error_nodes + missing_nodes)
+        < max(1, len(list(getattr(root, "children", []) or [])))
+    )
+    return ParseQuality(usable, error_nodes, missing_nodes, error_bytes, error_ratio)
+
+
+def _extractor_for_language(language: str) -> LanguageExtractor | None:
+    return EXTRACTORS.get(language.lower())
+
+
+def _build_python_records(
+    *,
+    repo: str,
+    repo_root: Any,
+    relative_path: str,
+    source: bytes,
+    text: str,
+    parser_registry: ParserRegistry | None = None,
+) -> BuildResult:
+    registry = parser_registry or get_parser_registry()
+    parser = registry.get("python")
+    if parser is None:
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language="python",
+                reason="python parser unavailable",
+            ),
+            language="python",
+            fallback_reason="python parser unavailable",
+        )
+
+    try:
+        tree = parser.parse(source)
+    except Exception as exc:
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language="python",
+                reason=f"python parser failed: {exc}",
+            ),
+            language="python",
+            fallback_reason=str(exc),
+        )
+
+    quality = evaluate_parse_quality(tree, source)
+    if not quality.usable:
+        reason = (
+            "parse quality unusable "
+            f"(errors={quality.error_nodes} missing={quality.missing_nodes} "
+            f"error_ratio={quality.error_ratio:.2f})"
+        )
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language="python",
+                reason=reason,
+            ),
+            language="python",
+            fallback_reason=reason,
+        )
+
+    extractor = _extractor_for_language("python")
+    if extractor is None:
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language="python",
+                reason="python extractor unavailable",
+            ),
+            language="python",
+            fallback_reason="python extractor unavailable",
+        )
+
+    try:
+        extraction = extractor.extract(source, tree, relative_path)
+    except Exception as exc:
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language="python",
+                reason=f"python extractor failed: {exc}",
+            ),
+            language="python",
+            fallback_reason=str(exc),
+        )
+
+    if not extraction.symbols:
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language="python",
+                reason="no useful Python symbols extracted",
+            ),
+            language="python",
+            fallback_reason="no useful Python symbols extracted",
+        )
+
+    records = build_structural_records(
+        repo=repo,
+        repo_root=repo_root,
+        relative_path=relative_path,
+        language="python",
+        source=source,
+        symbols=extraction.symbols,
+        imports=extraction.imports,
+    )
+    return BuildResult(records=records, language="python", fallback_reason=None)
+
+
+def build_index_records(
+    *,
+    repo: str,
+    repo_root: Any,
+    path: Any,
+    source: bytes,
+    text: str,
+    parser_registry: ParserRegistry | None = None,
+) -> BuildResult:
+    relative_path = path.relative_to(repo_root).as_posix()
+    language = detect_language(path, source, repository_hints={repo})
+    if language == "python":
+        return _build_python_records(
+            repo=repo,
+            repo_root=repo_root,
+            relative_path=relative_path,
+            source=source,
+            text=text,
+            parser_registry=parser_registry,
+        )
+
+    reason = (
+        "unknown language" if language is None else f"unsupported language {language}"
+    )
+    return BuildResult(
+        records=build_text_fallback_records(
+            repo=repo,
+            repo_root=repo_root,
+            relative_path=relative_path,
+            text=text,
+            language=language or "",
+            reason=reason,
+        ),
+        language=language or "",
+        fallback_reason=reason,
+    )
+
+
+__all__ = [
+    "BuildResult",
+    "CodeImport",
+    "CodeSymbol",
+    "ExtractionResult",
+    "INDEX_SCHEMA_VERSION",
+    "IndexRecord",
+    "MAX_SIGNATURE_CHARS",
+    "ParseQuality",
+    "build_index_records",
+    "evaluate_parse_quality",
+    "extract_python_imports",
+    "extract_python_symbols",
+    "make_chunk_id",
+    "walk_tree",
+]
