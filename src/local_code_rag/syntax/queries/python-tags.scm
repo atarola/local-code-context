@@ -14,6 +14,7 @@
 ;   - added module capture
 ;   - added explicit method captures
 ;   - added import captures
+;   - added constant capture
 ;   - added decorated-definition handling
 ;
 ; This file remains available under the MIT License.
@@ -44,3 +45,5 @@
 
 (import_statement) @reference.import
 (import_from_statement) @reference.import
+
+(assignment) @definition.constant

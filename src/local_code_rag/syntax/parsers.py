@@ -15,6 +15,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional dependency
     tree_sitter_python = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional dependency
+    import tree_sitter_rust
+except Exception:  # pragma: no cover - optional dependency
+    tree_sitter_rust = None  # type: ignore[assignment]
+
 
 def _set_parser_language(parser: Any, language: Any) -> bool:
     if hasattr(parser, "language"):
@@ -68,6 +73,42 @@ def _build_python_parser() -> Any | None:
     return parser
 
 
+def _build_rust_language() -> Any | None:
+    if tree_sitter_rust is None:
+        return None
+
+    language_factory = getattr(tree_sitter_rust, "language", None)
+    if language_factory is None:
+        return None
+
+    try:
+        language = language_factory()
+    except Exception as exc:
+        print(f"failed to load tree-sitter Rust grammar: {exc}", file=sys.stderr)
+        return None
+
+    if Language is not None and not isinstance(language, Language):
+        try:
+            language = Language(language)
+        except Exception:
+            pass
+    return language
+
+
+def _build_rust_parser() -> Any | None:
+    if Parser is None or tree_sitter_rust is None:
+        return None
+
+    parser = Parser()
+    language = _build_rust_language()
+    if language is None:
+        return None
+
+    if not _set_parser_language(parser, language):
+        return None
+    return parser
+
+
 @dataclass
 class ParserRegistry:
     _parsers: dict[str, Any | None] = field(default_factory=dict)
@@ -80,12 +121,20 @@ class ParserRegistry:
 
         parser: Any | None
         parser_language: Any | None = None
-        if key == "python":
+        builders = {
+            "python": (_build_python_parser, _build_python_language),
+            "rust": (_build_rust_parser, _build_rust_language),
+        }
+        builder = builders.get(key)
+        if builder is None:
+            parser = None
+        else:
+            build_parser, build_language = builder
             try:
-                built = _build_python_parser()
+                built = build_parser()
             except Exception as exc:  # pragma: no cover - defensive
                 print(
-                    f"failed to load tree-sitter parser for python: {exc}",
+                    f"failed to load tree-sitter parser for {key}: {exc}",
                     file=sys.stderr,
                 )
                 parser = None
@@ -95,9 +144,7 @@ class ParserRegistry:
                 else:
                     parser = built
                     if parser is not None:
-                        parser_language = _build_python_language()
-        else:
-            parser = None
+                        parser_language = build_language()
 
         if parser is None:
             self._parsers[key] = None

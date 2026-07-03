@@ -6,7 +6,14 @@ from pathlib import Path
 LANGUAGE_BY_SUFFIX = {
     ".py": "python",
     ".pyi": "python",
+    ".rs": "rust",
 }
+
+
+def _looks_like_rust_manifest(repository_hints: set[str] | None) -> bool:
+    if not repository_hints:
+        return False
+    return any(hint.lower() == "cargo.toml" for hint in repository_hints)
 
 
 def _looks_like_python_shebang(source: bytes) -> bool:
@@ -37,13 +44,14 @@ def detect_language(
     source: bytes,
     repository_hints: set[str] | None = None,
 ) -> str | None:
-    del repository_hints
-
     suffix = path.suffix.lower()
     if suffix in LANGUAGE_BY_SUFFIX:
         return LANGUAGE_BY_SUFFIX[suffix]
 
     if not suffix and _looks_like_python_shebang(source):
         return "python"
+
+    if not suffix and _looks_like_rust_manifest(repository_hints):
+        return "rust"
 
     return None

@@ -39,6 +39,7 @@
               py.requests
               py."tree-sitter"
               py."tree-sitter-python"
+              py."tree-sitter-rust"
               py.watchfiles
             ];
 

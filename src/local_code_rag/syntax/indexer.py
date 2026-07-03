@@ -17,6 +17,7 @@ from local_code_rag.syntax.rendering import (
 )
 from local_code_rag.syntax.extraction import (
     PythonTagQueryExtractor,
+    TagQueryExtractor,
     compare_python_extractions,
 )
 from local_code_rag.syntax.models import (
@@ -44,8 +45,9 @@ EXTRACTORS: dict[str, LanguageExtractor] = {
     "python": PythonSyntaxExtractor(),
 }
 
-QUERY_EXTRACTORS: dict[str, PythonTagQueryExtractor] = {
+QUERY_EXTRACTORS: dict[str, TagQueryExtractor] = {
     "python": PythonTagQueryExtractor(),
+    "rust": TagQueryExtractor("rust"),
 }
 
 
@@ -110,8 +112,133 @@ def _extractor_for_language(language: str) -> LanguageExtractor | None:
     return EXTRACTORS.get(language.lower())
 
 
-def _query_extractor_for_language(language: str) -> PythonTagQueryExtractor | None:
+def _query_extractor_for_language(language: str) -> TagQueryExtractor | None:
     return QUERY_EXTRACTORS.get(language.lower())
+
+
+def _build_query_records(
+    *,
+    language: str,
+    repo: str,
+    repo_root: Any,
+    relative_path: str,
+    source: bytes,
+    text: str,
+    python_extractor_mode: str = "legacy",
+    parser_registry: ParserRegistry | None = None,
+) -> BuildResult:
+    del python_extractor_mode
+    registry = parser_registry or get_parser_registry()
+    parser = registry.get(language)
+    if parser is None:
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language=language,
+                reason=f"{language} parser unavailable",
+            ),
+            language=language,
+            fallback_reason=f"{language} parser unavailable",
+        )
+
+    query_extractor = _query_extractor_for_language(language)
+    if query_extractor is None:
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language=language,
+                reason=f"{language} extractor unavailable",
+            ),
+            language=language,
+            fallback_reason=f"{language} extractor unavailable",
+        )
+
+    try:
+        tree = parser.parse(source)
+    except Exception as exc:
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language=language,
+                reason=f"{language} parser failed: {exc}",
+            ),
+            language=language,
+            fallback_reason=str(exc),
+        )
+
+    quality = evaluate_parse_quality(tree, source)
+    if not quality.usable:
+        reason = (
+            "parse quality unusable "
+            f"(errors={quality.error_nodes} missing={quality.missing_nodes} "
+            f"error_ratio={quality.error_ratio:.2f})"
+        )
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language=language,
+                reason=reason,
+            ),
+            language=language,
+            fallback_reason=reason,
+        )
+
+    try:
+        extraction = query_extractor.extract(source, tree, relative_path)
+    except Exception as exc:
+        print(
+            f"{language} tags query failed for {repo}:{relative_path}: {exc}; falling back to text chunks",
+            file=sys.stderr,
+        )
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language=language,
+                reason=f"{language} query failed: {exc}",
+            ),
+            language=language,
+            fallback_reason=str(exc),
+        )
+
+    if not extraction.symbols:
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language=language,
+                reason=f"no useful {language} symbols extracted",
+            ),
+            language=language,
+            fallback_reason=f"no useful {language} symbols extracted",
+        )
+
+    records = build_structural_records(
+        repo=repo,
+        repo_root=repo_root,
+        relative_path=relative_path,
+        language=language,
+        source=source,
+        symbols=extraction.symbols,
+        imports=extraction.imports,
+    )
+    return BuildResult(records=records, language=language, fallback_reason=None)
 
 
 def _compare_gaps_to_text(gaps: list[ComparisonGap]) -> None:
@@ -125,6 +252,7 @@ def _compare_gaps_to_text(gaps: list[ComparisonGap]) -> None:
 
 def _build_python_records(
     *,
+    language: str = "python",
     repo: str,
     repo_root: Any,
     relative_path: str,
@@ -133,6 +261,7 @@ def _build_python_records(
     parser_registry: ParserRegistry | None = None,
     python_extractor_mode: str = "legacy",
 ) -> BuildResult:
+    del language
     registry = parser_registry or get_parser_registry()
     parser = registry.get("python")
     if parser is None:
@@ -352,15 +481,21 @@ def build_index_records(
 ) -> BuildResult:
     relative_path = path.relative_to(repo_root).as_posix()
     language = detect_language(path, source, repository_hints={repo})
-    if language == "python":
-        return _build_python_records(
+    builders: dict[str, Any] = {
+        "python": _build_python_records,
+        "rust": _build_query_records,
+    }
+    builder = builders.get(language or "")
+    if builder is not None:
+        return builder(
+            language=language or "",
             repo=repo,
             repo_root=repo_root,
             relative_path=relative_path,
             source=source,
             text=text,
-            parser_registry=parser_registry,
             python_extractor_mode=python_extractor_mode,
+            parser_registry=parser_registry,
         )
 
     reason = (
