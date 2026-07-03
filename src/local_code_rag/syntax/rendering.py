@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from local_code_rag.syntax_models import (
+from local_code_rag.syntax.models import (
     CodeImport,
     CodeSymbol,
     INDEX_SCHEMA_VERSION,

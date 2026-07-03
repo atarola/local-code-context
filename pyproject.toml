@@ -14,10 +14,10 @@ dependencies = [
 ]
 
 [project.scripts]
-code-rag-index = "local_code_rag.index_repos:main"
-code-rag-query = "local_code_rag.query:main"
-code-rag-watch = "local_code_rag.watch_repos:main"
-code-rag-mcp = "local_code_rag.mcp_server:main"
+code-rag-index = "local_code_rag.indexing.indexer:main"
+code-rag-query = "local_code_rag.retrieval.query:main"
+code-rag-watch = "local_code_rag.indexing.watcher:main"
+code-rag-mcp = "local_code_rag.mcp.server:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -30,7 +30,7 @@ where = ["src"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-local_code_rag = ["*.scm"]
+"local_code_rag.syntax.queries" = ["*.scm"]
 
 [tool.uv]
 package = true

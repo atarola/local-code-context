@@ -43,17 +43,19 @@
             ];
 
             pythonImportsCheck = [
-              "local_code_rag.languages"
-              "local_code_rag.index_repos"
-              "local_code_rag.mcp_server"
-              "local_code_rag.python_syntax"
-              "local_code_rag.syntax_chunks"
-              "local_code_rag.syntax_models"
-              "local_code_rag.syntax_index"
-              "local_code_rag.query"
-              "local_code_rag.tree_sitter_support"
-              "local_code_rag.syntax_query"
-              "local_code_rag.watch_repos"
+              "local_code_rag.syntax.detection"
+              "local_code_rag.indexing.indexer"
+              "local_code_rag.indexing.watcher"
+              "local_code_rag.mcp.context"
+              "local_code_rag.mcp.server"
+              "local_code_rag.syntax.legacy_python"
+              "local_code_rag.syntax.rendering"
+              "local_code_rag.syntax.models"
+              "local_code_rag.syntax.indexer"
+              "local_code_rag.retrieval.query"
+              "local_code_rag.syntax.parsers"
+              "local_code_rag.syntax.extraction"
+              "local_code_rag.syntax.queries"
             ];
 
             meta = {

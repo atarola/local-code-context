@@ -9,8 +9,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from local_code_rag.syntax_index import INDEX_SCHEMA_VERSION, build_index_records
-from local_code_rag.syntax_chunks import CHUNK_LINES, CHUNK_OVERLAP, chunk_text
+from local_code_rag.syntax.indexer import INDEX_SCHEMA_VERSION, build_index_records
+from local_code_rag.syntax.rendering import CHUNK_LINES, CHUNK_OVERLAP, chunk_text
 
 
 DEFAULT_DB = "./codebase_index"

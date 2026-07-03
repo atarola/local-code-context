@@ -3,23 +3,23 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-from local_code_rag.languages import detect_language
-from local_code_rag.python_syntax import (
+from local_code_rag.syntax.detection import detect_language
+from local_code_rag.syntax.legacy_python import (
     PythonSyntaxExtractor,
     extract_python_imports,
     extract_python_symbols,
 )
-from local_code_rag.syntax_chunks import (
+from local_code_rag.syntax.rendering import (
     MAX_SIGNATURE_CHARS,
     build_structural_records,
     build_text_fallback_records,
     make_chunk_id,
 )
-from local_code_rag.syntax_query import (
+from local_code_rag.syntax.extraction import (
     PythonTagQueryExtractor,
     compare_python_extractions,
 )
-from local_code_rag.syntax_models import (
+from local_code_rag.syntax.models import (
     BuildResult,
     CodeImport,
     CodeSymbol,
@@ -30,7 +30,7 @@ from local_code_rag.syntax_models import (
     LanguageExtractor,
     ParseQuality,
 )
-from local_code_rag.tree_sitter_support import ParserRegistry, get_parser_registry
+from local_code_rag.syntax.parsers import ParserRegistry, get_parser_registry
 
 try:  # pragma: no cover - optional dependency
     from tree_sitter import Tree

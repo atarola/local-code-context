@@ -8,13 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from local_code_rag.mcp_context import (
+from local_code_rag.mcp.context import (
     get_repository_context,
     get_workspace_context,
     list_indexed_repositories,
     search_code,
 )
-from local_code_rag.query import (
+from local_code_rag.retrieval.query import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_COLLECTION,
     DEFAULT_DB,

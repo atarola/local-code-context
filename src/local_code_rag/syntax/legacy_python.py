@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from local_code_rag.syntax_chunks import MAX_SIGNATURE_CHARS
-from local_code_rag.syntax_models import (
+from local_code_rag.syntax.rendering import MAX_SIGNATURE_CHARS
+from local_code_rag.syntax.models import (
     CodeImport,
     CodeSymbol,
     ExtractionResult,

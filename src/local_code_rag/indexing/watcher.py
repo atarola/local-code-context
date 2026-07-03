@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from local_code_rag.index_repos import (
+from local_code_rag.indexing.indexer import (
     DEFAULT_COLLECTION,
     DEFAULT_DB,
     DEFAULT_EMBED_MODEL,

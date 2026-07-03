@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import sys
 from functools import lru_cache
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 
-from local_code_rag.python_syntax import (
+from local_code_rag.syntax.legacy_python import (
     _assignment_name,
     _collapse_signature,
     _definition_name,
@@ -16,8 +17,8 @@ from local_code_rag.python_syntax import (
     _node_lines,
     _node_text,
 )
-from local_code_rag.syntax_chunks import build_structural_records
-from local_code_rag.syntax_models import (
+from local_code_rag.syntax.rendering import build_structural_records
+from local_code_rag.syntax.models import (
     CodeImport,
     CodeSymbol,
     ComparisonGap,
@@ -38,7 +39,7 @@ except Exception:  # pragma: no cover - optional dependency
     tree_sitter_python = None  # type: ignore[assignment]
 
 
-QUERY_FILE = Path(__file__).with_name("python_tags.scm")
+QUERY_FILE = files("local_code_rag.syntax.queries").joinpath("python-tags.scm")
 
 SYMBOL_KIND_PRIORITY = {
     "module": 0,
@@ -465,7 +466,7 @@ def compare_python_extractions(
     repo_root: Path = Path("."),
     capture_source: CaptureSource | None = None,
 ) -> ExtractionComparison:
-    from local_code_rag.python_syntax import PythonSyntaxExtractor
+    from local_code_rag.syntax.legacy_python import PythonSyntaxExtractor
 
     legacy = PythonSyntaxExtractor().extract(source, tree, relative_path)
     query_extractor = PythonTagQueryExtractor(capture_source=capture_source)

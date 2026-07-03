@@ -13,8 +13,8 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from local_code_rag.languages import detect_language  # noqa: E402
-from local_code_rag.syntax_index import (  # noqa: E402
+from local_code_rag.syntax.detection import detect_language  # noqa: E402
+from local_code_rag.syntax.indexer import (  # noqa: E402
     MAX_SIGNATURE_CHARS,
     BuildResult,
     ParseQuality,
@@ -25,11 +25,11 @@ from local_code_rag.syntax_index import (  # noqa: E402
     extract_python_symbols,
     make_chunk_id,
 )
-from local_code_rag.syntax_query import (  # noqa: E402
+from local_code_rag.syntax.extraction import (  # noqa: E402
     PythonTagQueryExtractor,
     load_python_tags_query,
 )
-from local_code_rag.tree_sitter_support import ParserRegistry  # noqa: E402
+from local_code_rag.syntax.parsers import ParserRegistry  # noqa: E402
 
 
 @dataclass
@@ -231,7 +231,7 @@ class SyntaxIndexTests(unittest.TestCase):
         fake_parser = FakeParser(_sample_tree())
         registry = ParserRegistry()
         with patch(
-            "local_code_rag.tree_sitter_support._build_python_parser",
+            "local_code_rag.syntax.parsers._build_python_parser",
             return_value=fake_parser,
         ) as build:
             first = registry.get("python")
@@ -245,12 +245,15 @@ class SyntaxIndexTests(unittest.TestCase):
         fake_parser = FakeParser(_sample_tree())
         fake_language = object()
         registry = ParserRegistry()
-        with patch(
-            "local_code_rag.tree_sitter_support._build_python_parser",
-            return_value=fake_parser,
-        ), patch(
-            "local_code_rag.tree_sitter_support._build_python_language",
-            return_value=fake_language,
+        with (
+            patch(
+                "local_code_rag.syntax.parsers._build_python_parser",
+                return_value=fake_parser,
+            ),
+            patch(
+                "local_code_rag.syntax.parsers._build_python_language",
+                return_value=fake_language,
+            ),
         ):
             parser = registry.get("python")
             language = registry.get_language("python")
@@ -434,7 +437,7 @@ class SyntaxIndexTests(unittest.TestCase):
             parser_registry=registry,
         )
         with patch.dict(
-            "local_code_rag.syntax_index.QUERY_EXTRACTORS",
+            "local_code_rag.syntax.indexer.QUERY_EXTRACTORS",
             {"python": query_extractor},
         ):
             queried = build_index_records(
@@ -462,7 +465,7 @@ class SyntaxIndexTests(unittest.TestCase):
         registry = FakeRegistry(FakeParser(tree))
         query_extractor = PythonTagQueryExtractor(capture_source=FakeCaptureSource([]))
         with patch.dict(
-            "local_code_rag.syntax_index.QUERY_EXTRACTORS",
+            "local_code_rag.syntax.indexer.QUERY_EXTRACTORS",
             {"python": query_extractor},
         ):
             result = build_index_records(

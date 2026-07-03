@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from local_code_rag.index_repos import (
+from local_code_rag.indexing.indexer import (
     SKIP_SUFFIXES as IGNORED_SUFFIXES,
     iter_files,
     should_skip_path,
 )
-from local_code_rag.query import build_context, search_chunks
+from local_code_rag.retrieval.query import build_context, search_chunks
 
 
 IMPORTANT_FILES = [

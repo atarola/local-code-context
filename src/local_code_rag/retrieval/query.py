@@ -130,17 +130,50 @@ def print_hits(hits: list[dict[str, Any]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Query a local multi-repo Chroma code index with Ollama.")
-    parser.add_argument("--db", default=DEFAULT_DB, help=f"Chroma DB directory. Default: {DEFAULT_DB}")
-    parser.add_argument("--collection", default=DEFAULT_COLLECTION, help=f"Chroma collection. Default: {DEFAULT_COLLECTION}")
+    parser = argparse.ArgumentParser(
+        description="Query a local multi-repo Chroma code index with Ollama."
+    )
+    parser.add_argument(
+        "--db", default=DEFAULT_DB, help=f"Chroma DB directory. Default: {DEFAULT_DB}"
+    )
+    parser.add_argument(
+        "--collection",
+        default=DEFAULT_COLLECTION,
+        help=f"Chroma collection. Default: {DEFAULT_COLLECTION}",
+    )
     parser.add_argument("--q", required=True, help="Question to ask.")
     parser.add_argument("--repo", help="Restrict retrieval to a single repo name.")
-    parser.add_argument("--top-k", type=int, default=10, help="Number of chunks to retrieve. Default: 10")
-    parser.add_argument("--embed-model", default=DEFAULT_EMBED_MODEL, help=f"Ollama embedding model. Default: {DEFAULT_EMBED_MODEL}")
-    parser.add_argument("--model", default=DEFAULT_CHAT_MODEL, help=f"Ollama chat model. Default: {DEFAULT_CHAT_MODEL}")
-    parser.add_argument("--ollama-url", default=DEFAULT_OLLAMA_URL, help=f"Ollama base URL. Default: {DEFAULT_OLLAMA_URL}")
-    parser.add_argument("--show-context", action="store_true", help="Print retrieved chunks before the answer.")
-    parser.add_argument("--no-answer", action="store_true", help="Only print retrieval hits; do not call the chat model.")
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=10,
+        help="Number of chunks to retrieve. Default: 10",
+    )
+    parser.add_argument(
+        "--embed-model",
+        default=DEFAULT_EMBED_MODEL,
+        help=f"Ollama embedding model. Default: {DEFAULT_EMBED_MODEL}",
+    )
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_CHAT_MODEL,
+        help=f"Ollama chat model. Default: {DEFAULT_CHAT_MODEL}",
+    )
+    parser.add_argument(
+        "--ollama-url",
+        default=DEFAULT_OLLAMA_URL,
+        help=f"Ollama base URL. Default: {DEFAULT_OLLAMA_URL}",
+    )
+    parser.add_argument(
+        "--show-context",
+        action="store_true",
+        help="Print retrieved chunks before the answer.",
+    )
+    parser.add_argument(
+        "--no-answer",
+        action="store_true",
+        help="Only print retrieval hits; do not call the chat model.",
+    )
     args = parser.parse_args()
 
     hits = search_chunks(

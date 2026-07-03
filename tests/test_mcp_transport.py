@@ -23,7 +23,7 @@ class MCPTransportTests(unittest.TestCase):
                 [
                     sys.executable,
                     "-m",
-                    "local_code_rag.mcp_server",
+                    "local_code_rag.mcp.server",
                     "--db",
                     tmpdir,
                 ],

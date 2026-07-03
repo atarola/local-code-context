@@ -1,8 +1,22 @@
 ; SPDX-License-Identifier: MIT
-; Derived from Aider-AI/aider/aider/queries/tree-sitter-languages/python-tags.scm
-; and the tree-sitter-python grammar (MIT).
-; Upstream reference:
-; https://github.com/Aider-AI/aider/blob/main/aider/queries/tree-sitter-languages/python-tags.scm
+;
+; Derived from:
+;   Aider-AI/aider
+;   aider/queries/tree-sitter-languages/python-tags.scm
+;   commit: e3d5eaf388ae8da925fbd0d3577adbc07fdae16d
+;
+; Original query/grammar project:
+;   tree-sitter/tree-sitter-python
+;   commit or release: 0.25.0
+;
+; Local modifications:
+;   - normalized definition-name captures to @name
+;   - added module capture
+;   - added explicit method captures
+;   - added import captures
+;   - added decorated-definition handling
+;
+; This file remains available under the MIT License.
 
 (module) @definition.module
 

@@ -1,0 +1,3 @@
+include THIRD_PARTY_NOTICES.md
+recursive-include LICENSES *.txt
+recursive-include src/local_code_rag/syntax/queries *.scm

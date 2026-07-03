@@ -12,7 +12,7 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from local_code_rag import index_repos  # noqa: E402
+from local_code_rag.indexing import indexer as index_repos  # noqa: E402
 
 
 class FakeCollection:
@@ -140,17 +140,19 @@ class IndexRepoTests(unittest.TestCase):
             manifest = {"files": {}}
 
             with patch(
-                "local_code_rag.index_repos.read_text", return_value="print('hello')\n"
+                "local_code_rag.indexing.indexer.read_text",
+                return_value="print('hello')\n",
             ):
                 with patch(
-                    "local_code_rag.index_repos.chunk_text",
+                    "local_code_rag.indexing.indexer.chunk_text",
                     return_value=[(1, 1, "print('hello')")],
                 ):
                     with patch(
-                        "local_code_rag.index_repos.content_hash", return_value="digest"
+                        "local_code_rag.indexing.indexer.content_hash",
+                        return_value="digest",
                     ):
                         with patch(
-                            "local_code_rag.index_repos.ollama_embed",
+                            "local_code_rag.indexing.indexer.ollama_embed",
                             return_value=[[0.1, 0.2]],
                         ):
                             changed = index_repos.index_file(
@@ -184,7 +186,7 @@ class IndexRepoTests(unittest.TestCase):
             manifest = {"files": {}}
 
             with patch(
-                "local_code_rag.index_repos.ollama_embed",
+                "local_code_rag.indexing.indexer.ollama_embed",
                 side_effect=lambda texts, model, base_url: [
                     [float(i)] for i, _ in enumerate(texts)
                 ],
@@ -223,7 +225,7 @@ class IndexRepoTests(unittest.TestCase):
 
             first.write_text("def first():\n    return 10\n", encoding="utf-8")
             with patch(
-                "local_code_rag.index_repos.ollama_embed",
+                "local_code_rag.indexing.indexer.ollama_embed",
                 side_effect=lambda texts, model, base_url: [
                     [float(i) + 10.0] for i, _ in enumerate(texts)
                 ],
@@ -263,7 +265,7 @@ class IndexRepoTests(unittest.TestCase):
             manifest = {"files": {}}
 
             with patch(
-                "local_code_rag.index_repos.ollama_embed",
+                "local_code_rag.indexing.indexer.ollama_embed",
                 side_effect=_fake_embeddings,
             ):
                 index_repos.index_file(
@@ -285,7 +287,7 @@ class IndexRepoTests(unittest.TestCase):
             path.write_text("def demo():\n    return 2\n", encoding="utf-8")
             collection.fail_next_add = True
             with patch(
-                "local_code_rag.index_repos.ollama_embed",
+                "local_code_rag.indexing.indexer.ollama_embed",
                 side_effect=_fake_embeddings,
             ):
                 changed = index_repos.index_file(
@@ -318,7 +320,7 @@ class IndexRepoTests(unittest.TestCase):
             manifest = {"files": {}}
 
             with patch(
-                "local_code_rag.index_repos.ollama_embed",
+                "local_code_rag.indexing.indexer.ollama_embed",
                 side_effect=_fake_embeddings,
             ):
                 index_repos.index_file(
