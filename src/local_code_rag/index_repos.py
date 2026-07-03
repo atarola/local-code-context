@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -22,9 +23,13 @@ SKIP_DIRS = {
     ".svn",
     ".idea",
     ".vscode",
+    ".agents",
+    ".cache",
+    ".codex",
     ".mypy_cache",
     ".pytest_cache",
     ".ruff_cache",
+    ".uv-cache",
     "__pycache__",
     "node_modules",
     "dist",
@@ -127,10 +132,41 @@ def file_key(repo: str, rel_path: str) -> str:
 
 
 def should_skip_path(path: Path) -> bool:
-    return any(part in SKIP_DIRS for part in path.parts) or path.suffix.lower() in SKIP_SUFFIXES
+    return (
+        any(part in SKIP_DIRS for part in path.parts)
+        or any(part.endswith(".egg-info") for part in path.parts)
+        or path.name in {".DS_Store", ".gitignore"}
+        or path.suffix.lower() in SKIP_SUFFIXES
+    )
+
+
+def git_list_files(repo: Path) -> list[Path] | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "ls-files", "-co", "--exclude-standard", "-z"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+    files: list[Path] = []
+    for raw in result.stdout.split(b"\0"):
+        if not raw:
+            continue
+        rel = Path(raw.decode("utf-8", errors="surrogateescape"))
+        if should_skip_path(rel):
+            continue
+        files.append(repo / rel)
+    return sorted(files)
 
 
 def iter_files(repo: Path) -> list[Path]:
+    git_files = git_list_files(repo)
+    if git_files is not None:
+        return git_files
+
     files: list[Path] = []
     for path in repo.rglob("*"):
         if not path.is_file():

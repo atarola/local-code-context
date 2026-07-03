@@ -160,6 +160,11 @@ incremental: `manifest.json` inside the `--db` directory tracks a content hash
 per file, so unchanged files are skipped entirely on re-runs. Only new, edited,
 and deleted files are reflected in Chroma.
 
+The indexer also skips common cache and build directories by default, including
+`.git`, `.venv`, `.uv-cache`, `.cache`, `node_modules`, `build`, `dist`,
+`.gitignore`, and package metadata directories ending in `.egg-info`.
+For git repositories, files ignored by `.gitignore` are excluded automatically.
+
 Use `--force` to ignore the manifest and re-embed everything, for example after
 changing `CHUNK_LINES` or `CHUNK_OVERLAP` in `src/local_code_rag/index_repos.py`.
 
