@@ -14,6 +14,7 @@ from local_code_context.mcp.context import (
     list_indexed_repositories,
     search_code,
 )
+from local_code_context.mcp.symbols import get_symbol
 from local_code_context.retrieval.query import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_COLLECTION,
@@ -142,6 +143,24 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
         return _call_search(config, arguments, default_repo=None)
     if name == "query_codebase":
         return _call_search(config, arguments, default_repo=config.repo)
+    if name == "get_symbol":
+        symbol = arguments.get("symbol")
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ValueError("symbol is required")
+        repo = _argument(arguments, "repo", None)
+        path = _argument(arguments, "path", None)
+        kind = _argument(arguments, "kind", None)
+        limit = arguments.get("limit")
+        if limit is not None:
+            limit = int(limit)
+        return get_symbol(
+            config,
+            symbol=symbol.strip(),
+            repo=repo.strip() if isinstance(repo, str) else None,
+            path=path.strip() if isinstance(path, str) else None,
+            kind=kind.strip() if isinstance(kind, str) else None,
+            limit=limit,
+        )
     raise ValueError(f"unknown tool: {name}")
 
 
@@ -275,6 +294,44 @@ def _tools() -> list[dict[str, Any]]:
                     },
                 },
                 "required": ["q"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "get_symbol",
+            "description": (
+                "Retrieve indexed structural records by exact symbol name. "
+                "Searches only symbol and symbol_part records using metadata filters. "
+                "Groups multipart (split) symbols under a single entry. "
+                "Use repo, path, or kind to narrow results."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "Required exact symbol name.",
+                    },
+                    "repo": {
+                        "type": "string",
+                        "description": "Optional repository filter.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional path filter.",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": "Optional symbol-kind filter (e.g. function, class, method).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 200,
+                        "description": "Optional maximum results. Bounded to 200.",
+                    },
+                },
+                "required": ["symbol"],
                 "additionalProperties": False,
             },
         },
