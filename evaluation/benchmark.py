@@ -54,7 +54,9 @@ from local_code_context.mcp.context import (
     search_code as _search_code,
     list_indexed_repositories,
 )
+from local_code_context.retrieval.hybrid import search_code_hybrid
 from local_code_context.retrieval.query import search_chunks, get_collection
+from local_code_context.retrieval.ranking import get_weights, set_weights
 from local_code_context.indexing.indexer import (
     DEFAULT_EMBED_MODEL,
     DEFAULT_OLLAMA_URL,
@@ -248,6 +250,7 @@ class QueryResult:
     hits: list[Result]
     latency: float
     error: str | None = None
+    phase_timings: dict[str, float] | None = None
 
 
 def result_to_hit_entry(r: Result) -> dict[str, Any]:
@@ -343,6 +346,8 @@ def method_applicable(question: Question, method: str) -> bool:
     if method == "repo_context":
         # Repo context is orientation, not ranked retrieval
         return False
+    if method in ("hybrid", "hybrid_full", "hybrid_semantic_lexical", "hybrid_semantic_symbol"):
+        return True
     if method == "rg_oracle":
         # Oracle uses answer metadata — diagnostic only
         return False
@@ -414,6 +419,90 @@ def semantic_search(question: Question, config: ServerConfig) -> QueryResult:
     except Exception as e:
         traceback.print_exc()
         return QueryResult(hits=[], latency=time.time() - t0, error=str(e))
+
+
+def _run_hybrid_ablation(
+    question: Question,
+    config: ServerConfig,
+    *,
+    zero_semantic: bool = False,
+    zero_lexical: bool = False,
+    zero_symbol: bool = False,
+    include_lexical: bool = False,
+) -> tuple[QueryResult, dict[str, float]]:
+    query = question.text
+    timings: dict[str, float] = {}
+    t0 = time.time()
+    try:
+        if zero_semantic or zero_lexical or zero_symbol:
+            saved = get_weights()
+            if zero_semantic:
+                set_weights({"semantic": 0.0})
+            if zero_lexical:
+                set_weights({"lexical": 0.0})
+            if zero_symbol:
+                set_weights({"exact_symbol": 0.0})
+        try:
+            results = search_code_hybrid(
+                config,
+                query=query,
+                repo=question.expected_repo,
+                limit=config.top_k,
+                _timings=timings,
+                include_lexical=include_lexical,
+            )
+        finally:
+            if zero_semantic or zero_lexical or zero_symbol:
+                set_weights(saved)
+        latency = time.time() - t0
+        hits: list[Result] = []
+        for i, r in enumerate(results):
+            hits.append(Result(
+                path=r.path,
+                repo=r.repo,
+                symbol=r.symbol,
+                kind=r.symbol_kind,
+                chunk_type=r.chunk_type,
+                start_line=r.start_line,
+                part_index=r.part_index,
+                record_id=r.id,
+                content=r.document[:300],
+                rank=i + 1,
+            ))
+        qr = QueryResult(hits=hits, latency=latency, phase_timings=timings)
+        return qr, timings
+    except Exception as e:
+        traceback.print_exc()
+        qr = QueryResult(hits=[], latency=time.time() - t0, error=str(e), phase_timings=timings)
+        return qr, timings
+
+
+def hybrid_search(question: Question, config: ServerConfig) -> QueryResult:
+    """Default hybrid: semantic + exact symbol (lexical auto-triggered if low confidence)."""
+    result, _ = _run_hybrid_ablation(question, config, include_lexical=False)
+    return result
+
+
+def hybrid_full_search(question: Question, config: ServerConfig) -> QueryResult:
+    """Full hybrid: semantic + lexical + exact symbol (lexical always included)."""
+    result, _ = _run_hybrid_ablation(question, config, include_lexical=True)
+    return result
+
+
+def hybrid_search_semantic_lexical(
+    question: Question, config: ServerConfig,
+) -> QueryResult:
+    """Semantic + lexical, no symbol weight."""
+    result, _ = _run_hybrid_ablation(question, config, zero_symbol=True, include_lexical=True)
+    return result
+
+
+def hybrid_search_semantic_symbol(
+    question: Question, config: ServerConfig,
+) -> QueryResult:
+    """Semantic + symbol only (same as default hybrid)."""
+    result, _ = _run_hybrid_ablation(question, config, zero_lexical=True)
+    return result
 
 
 def _extract_rg_terms(text: str, max_terms: int = 3) -> list[str]:
@@ -588,18 +677,30 @@ def run_evaluation(config: ServerConfig) -> list[dict[str, Any]]:
         if q.category == "exact-symbol":
             methods = [
                 ("exact_symbol", lambda q=q: exact_symbol_lookup(q, config)),
+                ("hybrid", lambda q=q: hybrid_search(q, config)),
+                ("hybrid_full", lambda q=q: hybrid_full_search(q, config)),
+                ("hybrid_semantic_lexical", lambda q=q: hybrid_search_semantic_lexical(q, config)),
+                ("hybrid_semantic_symbol", lambda q=q: hybrid_search_semantic_symbol(q, config)),
                 ("semantic_search", lambda q=q: semantic_search(q, config)),
                 ("rg_question", lambda q=q: rg_question(q)),
                 ("rg_oracle", lambda q=q: rg_oracle(q)),
             ]
         elif q.category in ("conceptual", "cross-repo", "fallback"):
             methods = [
+                ("hybrid", lambda q=q: hybrid_search(q, config)),
+                ("hybrid_full", lambda q=q: hybrid_full_search(q, config)),
+                ("hybrid_semantic_lexical", lambda q=q: hybrid_search_semantic_lexical(q, config)),
+                ("hybrid_semantic_symbol", lambda q=q: hybrid_search_semantic_symbol(q, config)),
                 ("semantic_search", lambda q=q: semantic_search(q, config)),
                 ("rg_question", lambda q=q: rg_question(q)),
                 ("rg_oracle", lambda q=q: rg_oracle(q)),
             ]
         elif q.category == "negative":
             methods = [
+                ("hybrid", lambda q=q: hybrid_search(q, config)),
+                ("hybrid_full", lambda q=q: hybrid_full_search(q, config)),
+                ("hybrid_semantic_lexical", lambda q=q: hybrid_search_semantic_lexical(q, config)),
+                ("hybrid_semantic_symbol", lambda q=q: hybrid_search_semantic_symbol(q, config)),
                 ("semantic_search", lambda q=q: semantic_search(q, config)),
                 ("rg_question", lambda q=q: rg_question(q)),
             ]
@@ -609,6 +710,8 @@ def run_evaluation(config: ServerConfig) -> list[dict[str, Any]]:
             result = method_fn()
             applicable = method_applicable(q, method_name)
             scored = score_results(q, result, method_name, applicable=applicable)
+            if hasattr(result, "phase_timings") and result.phase_timings:
+                scored["phase_timings_ms"] = dict(result.phase_timings)
             eval_results.append(scored)
 
     return eval_results
@@ -1136,6 +1239,43 @@ def op_test_11_deterministic_ordering(config: ServerConfig, db_path: Path) -> di
     }
 
 
+def op_test_12_deterministic_hybrid(config: ServerConfig, db_path: Path) -> dict[str, Any]:
+    """Hybrid search returns identical ordered result IDs across 3 runs."""
+    queries = [
+        "Find the function search_chunks",
+        "How does the indexer decide which files and directories to skip?",
+        "How is ACIA serial communication tested in the 6502 emulator?",
+    ]
+    violations: list[dict] = []
+
+    for qtext in queries:
+        runs: list[list[str]] = []
+        for _ in range(3):
+            results = search_code_hybrid(
+                config,
+                query=qtext,
+                limit=TOP_K,
+                include_lexical=True,
+            )
+            ids = [r.id for r in results]
+            runs.append(ids)
+
+        for i in range(1, 3):
+            if runs[0] != runs[i]:
+                violations.append({"query": qtext[:60], "run_0_vs": i, "run_0_ids": runs[0], f"run_{i}_ids": runs[i]})
+
+    passed = len(violations) == 0
+    return {
+        "test": "deterministic_hybrid_ordering",
+        "passed": passed,
+        "details": {
+            "queries_tested": len(queries),
+            "violations": violations,
+            "runs_compared": 3,
+        },
+    }
+
+
 def run_operational_tests(config: ServerConfig, tmp_db: Path) -> list[dict[str, Any]]:
     """Run all operational tests against the temp index and temp fixtures."""
     sys.stderr.write("Running operational tests...\n")
@@ -1158,6 +1298,7 @@ def run_operational_tests(config: ServerConfig, tmp_db: Path) -> list[dict[str, 
             ("mcp_restart", lambda: op_test_9_mcp_restart(collection, manifest, tmp_db)),
             ("stdout_discipline", lambda: op_test_10_stdout_discipline(tmp_db)),
             ("deterministic_ordering", lambda: op_test_11_deterministic_ordering(config, tmp_db)),
+            ("deterministic_hybrid", lambda: op_test_12_deterministic_hybrid(config, tmp_db)),
         ]
 
         results = []
@@ -1247,9 +1388,16 @@ def classify_failure(result: dict) -> dict:
 # ---- Metrics ----------------------------------------------------------------
 
 def compute_metrics(eval_results: list[dict]) -> dict[str, Any]:
-    methods_order = ["exact_symbol", "semantic_search", "rg_question", "rg_oracle"]
+    methods_order = [
+        "exact_symbol", "hybrid", "hybrid_full", "hybrid_semantic_lexical", "hybrid_semantic_symbol",
+        "semantic_search", "rg_question", "rg_oracle",
+    ]
     method_labels = {
         "exact_symbol": "Exact Symbol",
+        "hybrid": "Hybrid (semantic+symbol, default)",
+        "hybrid_full": "Hybrid (semantic+lexical+symbol)",
+        "hybrid_semantic_lexical": "Hybrid (semantic+lexical)",
+        "hybrid_semantic_symbol": "Hybrid (semantic+symbol)",
         "semantic_search": "Semantic Search",
         "rg_question": "rg-question (lexical)",
         "rg_oracle": "rg-oracle (upper bound)",
@@ -1346,6 +1494,10 @@ def compute_metrics(eval_results: list[dict]) -> dict[str, Any]:
 
 METHOD_LABELS = {
     "exact_symbol": "Exact Symbol",
+    "hybrid": "Hybrid (semantic+symbol, default)",
+    "hybrid_full": "Hybrid (semantic+lexical+symbol)",
+    "hybrid_semantic_lexical": "Hybrid (semantic+lexical)",
+    "hybrid_semantic_symbol": "Hybrid (semantic+symbol)",
     "semantic_search": "Semantic Search",
     "rg_question": "rg-question",
     "rg_oracle": "rg-oracle",
@@ -1383,7 +1535,7 @@ def generate_report(
     bc = metrics.get("by_category", {})
     for cat in ["exact-symbol", "conceptual", "cross-repo", "fallback", "negative"]:
         cat_data = bc.get(cat, {})
-        for m in ["exact_symbol", "semantic_search", "rg_question", "rg_oracle"]:
+        for m in ["exact_symbol", "hybrid", "hybrid_full", "hybrid_semantic_lexical", "hybrid_semantic_symbol", "semantic_search", "rg_question", "rg_oracle"]:
             m_data = cat_data.get(m)
             if not m_data:
                 continue
@@ -1403,7 +1555,7 @@ def generate_report(
     lines.append("")
 
     bm = metrics.get("by_method", {})
-    for m in ["exact_symbol", "semantic_search", "rg_question", "rg_oracle"]:
+    for m in ["exact_symbol", "hybrid", "hybrid_full", "hybrid_semantic_lexical", "hybrid_semantic_symbol", "semantic_search", "rg_question", "rg_oracle"]:
         md = bm.get(m)
         if not md:
             continue
@@ -1421,7 +1573,7 @@ def generate_report(
     lines.append("| Method | Raw Q | Applicable Q | Not Applicable | Raw Hit@1 | Adj Hit@1 | Adj Hit@5 |")
     lines.append("|--------|-------|-------------|----------------|-----------|-----------|-----------|")
     aa = metrics.get("applicability_adjusted", {})
-    for m in ["exact_symbol", "semantic_search", "rg_question"]:
+    for m in ["exact_symbol", "hybrid", "hybrid_full", "hybrid_semantic_lexical", "hybrid_semantic_symbol", "semantic_search", "rg_question"]:
         a = aa.get(m)
         if not a:
             continue

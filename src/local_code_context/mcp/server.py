@@ -15,6 +15,7 @@ from local_code_context.mcp.context import (
     search_code,
 )
 from local_code_context.mcp.symbols import get_symbol
+from local_code_context.retrieval.hybrid import search_code_hybrid
 from local_code_context.retrieval.query import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_COLLECTION,
@@ -110,6 +111,48 @@ def _call_search(
     )
 
 
+def _call_hybrid_search(
+    config: ServerConfig,
+    query: str,
+    repo: str | None,
+    path: str | None,
+    language: str | None,
+    limit: int | None,
+    include_lexical: bool = False,
+) -> str:
+    limit = limit or 5
+    results = search_code_hybrid(
+        config,
+        query=query,
+        repo=repo,
+        path=path,
+        language=language,
+        limit=limit,
+        include_lexical=include_lexical,
+    )
+    if not results:
+        return "(no results match the query)"
+
+    output_parts: list[str] = [f"Hybrid search results (limit={limit}):"]
+
+    for r in results:
+        line = (
+            f"  [{r.rank}] {r.repo} {r.path}:{r.start_line}-{r.end_line}"
+        )
+        if r.symbol:
+            line += f" symbol={r.symbol}"
+        line += (
+            f"  final={r.final_score:.3f}"
+            f" semantic={r.semantic_score:.3f}"
+            f" lexical={r.lexical_score:.3f}"
+            f" exact_symbol={r.exact_symbol_score:.3f}"
+            f" sources={','.join(r.match_sources)}"
+        )
+        output_parts.append(line)
+
+    return "\n".join(output_parts)
+
+
 def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> str:
     if name == "list_repositories":
         repos = list_indexed_repositories(config)
@@ -160,6 +203,24 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
             path=path.strip() if isinstance(path, str) else None,
             kind=kind.strip() if isinstance(kind, str) else None,
             limit=limit,
+        )
+    if name == "search_code_hybrid":
+        query = arguments.get("query")
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("query is required")
+        repo = _argument(arguments, "repo", None)
+        path = _argument(arguments, "path", None)
+        language = _argument(arguments, "language", None)
+        limit = arguments.get("limit")
+        if limit is not None:
+            limit = int(limit)
+            if limit < 1 or limit > 20:
+                raise ValueError("limit must be between 1 and 20")
+        include_lexical = bool(arguments.get("include_lexical", False))
+        return _call_hybrid_search(
+            config, query=query.strip(), repo=repo, path=path,
+            language=language, limit=limit,
+            include_lexical=include_lexical,
         )
     raise ValueError(f"unknown tool: {name}")
 
@@ -332,6 +393,49 @@ def _tools() -> list[dict[str, Any]]:
                     },
                 },
                 "required": ["symbol"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "search_code_hybrid",
+            "description": (
+                "Combines semantic (embedding) and exact-symbol matching by default. "
+                "Lexical (ripgrep) is auto-triggered when initial confidence is low, or "
+                "opt-in via include_lexical=true. Returns deduplicated, reranked results "
+                "with per-source scores. Filters low-confidence results for negative queries. "
+                "Use repo, path, or language to narrow."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Required search query.",
+                    },
+                    "repo": {
+                        "type": "string",
+                        "description": "Optional repository filter.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional path filter.",
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Optional language filter (e.g. python, rust).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "description": "Optional result count (1-20). Default: 5.",
+                    },
+                    "include_lexical": {
+                        "type": "boolean",
+                        "description": "Opt-in to lexical (ripgrep) matching. Default: false.",
+                    },
+                },
+                "required": ["query"],
                 "additionalProperties": False,
             },
         },
