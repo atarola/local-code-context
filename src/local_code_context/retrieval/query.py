@@ -30,6 +30,15 @@ def ollama_embed(text: str, model: str, base_url: str) -> list[float]:
     raise RuntimeError(f"unexpected Ollama embed response: {payload}")
 
 
+def get_collection(
+    db_path: Path = Path(DEFAULT_DB), collection_name: str = DEFAULT_COLLECTION
+) -> Any:
+    import chromadb
+
+    client = chromadb.PersistentClient(path=str(db_path))
+    return client.get_or_create_collection(collection_name)
+
+
 def search_chunks(
     db_path: Path,
     collection_name: str,
@@ -39,10 +48,7 @@ def search_chunks(
     top_k: int,
     repo: str | None,
 ) -> list[dict[str, Any]]:
-    import chromadb
-
-    client = chromadb.PersistentClient(path=str(db_path))
-    collection = client.get_or_create_collection(collection_name)
+    collection = get_collection(db_path=db_path, collection_name=collection_name)
     query_embedding = ollama_embed(query, embed_model, ollama_url)
     where = {"repo": repo} if repo else None
     results = collection.query(
