@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
-import fnmatch
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -90,10 +90,14 @@ def discover_workspace_repos(workspace: Path) -> list[Path]:
     return repos
 
 
-def resolve_repos(repos: list[str] | None = None, workspaces: list[str] | None = None) -> list[Path]:
+def resolve_repos(
+    repos: list[str] | None = None, workspaces: list[str] | None = None
+) -> list[Path]:
     repo_paths = [Path(repo).expanduser().resolve() for repo in repos or []]
     for workspace_arg in workspaces or []:
-        repo_paths.extend(discover_workspace_repos(Path(workspace_arg).expanduser().resolve()))
+        repo_paths.extend(
+            discover_workspace_repos(Path(workspace_arg).expanduser().resolve())
+        )
 
     deduped: dict[str, Path] = {}
     for repo in repo_paths:
@@ -192,7 +196,11 @@ def iter_files(repo: Path) -> list[Path]:
     ignore_patterns = load_index_ignore(repo)
     git_files = git_list_files(repo)
     if git_files is not None:
-        return [path for path in git_files if not should_skip_path(path.relative_to(repo), ignore_patterns)]
+        return [
+            path
+            for path in git_files
+            if not should_skip_path(path.relative_to(repo), ignore_patterns)
+        ]
 
     files: list[Path] = []
     for path in repo.rglob("*"):
@@ -297,12 +305,15 @@ def index_file(
     documents: list[str] = []
     metadatas: list[dict[str, Any]] = []
     for index, (start_line, end_line, chunk) in enumerate(chunks):
-        chunk_id = hashlib.sha256(f"{repo}:{rel_path}:{digest}:{index}".encode("utf-8")).hexdigest()
+        chunk_id = hashlib.sha256(
+            f"{repo}:{rel_path}:{digest}:{index}".encode("utf-8")
+        ).hexdigest()
         ids.append(chunk_id)
         documents.append(chunk)
         metadatas.append(
             {
                 "repo": repo,
+                "repo_root": str(repo_root),
                 "path": rel_path,
                 "start_line": start_line,
                 "end_line": end_line,
@@ -322,6 +333,7 @@ def index_file(
 
     manifest["files"][key] = {
         "repo": repo,
+        "repo_root": str(repo_root),
         "path": rel_path,
         "hash": digest,
         "ids": ids,
@@ -332,7 +344,9 @@ def index_file(
     return True
 
 
-def prune_deleted(collection: Any, manifest: dict[str, Any], repo: str, seen_keys: set[str]) -> int:
+def prune_deleted(
+    collection: Any, manifest: dict[str, Any], repo: str, seen_keys: set[str]
+) -> int:
     removed = 0
     for key, entry in list(manifest["files"].items()):
         if entry.get("repo") != repo or key in seen_keys:
@@ -370,7 +384,9 @@ def run_index(
     for repo_root in repo_paths:
         repo = repo_name(repo_root)
         files = iter_files(repo_root)
-        seen_keys = {file_key(repo, path.relative_to(repo_root).as_posix()) for path in files}
+        seen_keys = {
+            file_key(repo, path.relative_to(repo_root).as_posix()) for path in files
+        }
 
         changed = 0
         skipped = 0
@@ -395,26 +411,55 @@ def run_index(
         total_changed += changed
         total_skipped += skipped
         total_deleted += deleted
-        print(f"{repo}: indexed/updated {changed}, skipped {skipped}, removed {deleted}")
+        print(
+            f"{repo}: indexed/updated {changed}, skipped {skipped}, removed {deleted}"
+        )
 
     save_manifest(db_path, manifest)
-    print(f"done: indexed/updated {total_changed}, skipped {total_skipped}, removed {total_deleted}")
+    print(
+        f"done: indexed/updated {total_changed}, skipped {total_skipped}, removed {total_deleted}"
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Index one or more repos into a local Chroma DB.")
-    parser.add_argument("--repo", action="append", default=[], help="Repo path to index. Repeat for multiple repos.")
+    parser = argparse.ArgumentParser(
+        description="Index one or more repos into a local Chroma DB."
+    )
+    parser.add_argument(
+        "--repo",
+        action="append",
+        default=[],
+        help="Repo path to index. Repeat for multiple repos.",
+    )
     parser.add_argument(
         "--workspace",
         action="append",
         default=[],
         help="Workspace directory whose immediate Git child directories should be indexed. Repeat for multiple workspaces.",
     )
-    parser.add_argument("--db", default=DEFAULT_DB, help=f"Chroma DB directory. Default: {DEFAULT_DB}")
-    parser.add_argument("--collection", default=DEFAULT_COLLECTION, help=f"Chroma collection. Default: {DEFAULT_COLLECTION}")
-    parser.add_argument("--embed-model", default=DEFAULT_EMBED_MODEL, help=f"Ollama embedding model. Default: {DEFAULT_EMBED_MODEL}")
-    parser.add_argument("--ollama-url", default=DEFAULT_OLLAMA_URL, help=f"Ollama base URL. Default: {DEFAULT_OLLAMA_URL}")
-    parser.add_argument("--force", action="store_true", help="Re-embed every file, ignoring the manifest hash cache.")
+    parser.add_argument(
+        "--db", default=DEFAULT_DB, help=f"Chroma DB directory. Default: {DEFAULT_DB}"
+    )
+    parser.add_argument(
+        "--collection",
+        default=DEFAULT_COLLECTION,
+        help=f"Chroma collection. Default: {DEFAULT_COLLECTION}",
+    )
+    parser.add_argument(
+        "--embed-model",
+        default=DEFAULT_EMBED_MODEL,
+        help=f"Ollama embedding model. Default: {DEFAULT_EMBED_MODEL}",
+    )
+    parser.add_argument(
+        "--ollama-url",
+        default=DEFAULT_OLLAMA_URL,
+        help=f"Ollama base URL. Default: {DEFAULT_OLLAMA_URL}",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-embed every file, ignoring the manifest hash cache.",
+    )
     args = parser.parse_args()
 
     run_index(
