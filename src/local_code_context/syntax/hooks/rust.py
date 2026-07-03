@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 
-from local_code_rag.syntax.capture_models import CapturedSymbol, ExtractionContext, QueryLanguageHooks
-from local_code_rag.syntax.legacy_python import _collapse_signature, _node_text
+from local_code_context.syntax.capture_models import CapturedSymbol, ExtractionContext, QueryLanguageHooks
+from local_code_context.syntax.legacy_python import _collapse_signature, _node_text
 
 
 def _nearest_ancestor(node: object, types: set[str]) -> object | None:

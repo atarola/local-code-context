@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from local_code_rag.syntax.capture_models import (
+from local_code_context.syntax.capture_models import (
     CapturedImport,
     CapturedSymbol,
     ExtractionContext,
     QueryLanguageHooks,
 )
-from local_code_rag.syntax.legacy_python import (
+from local_code_context.syntax.legacy_python import (
     _assignment_name,
     _collapse_signature,
     _definition_name,

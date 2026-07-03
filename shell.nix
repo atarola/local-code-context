@@ -16,6 +16,6 @@ pkgs.mkShell {
 
   shellHook = ''
     export OLLAMA_HOST=''${OLLAMA_HOST:-127.0.0.1:11434}
-    export LOCAL_CODE_RAG_OLLAMA_URL="http://$OLLAMA_HOST"
+    export LOCAL_CODE_CONTEXT_OLLAMA_URL="http://$OLLAMA_HOST"
   '';
 }

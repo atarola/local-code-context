@@ -12,8 +12,8 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from local_code_rag.indexing import indexer as index_repos  # noqa: E402
-from local_code_rag.indexing import watcher as watch_repos  # noqa: E402
+from local_code_context.indexing import indexer as index_repos  # noqa: E402
+from local_code_context.indexing import watcher as watch_repos  # noqa: E402
 
 
 class MemoryCollection:
@@ -125,7 +125,7 @@ class WatchRepoTests(unittest.TestCase):
             manifest = {"files": {}}
 
             with patch(
-                "local_code_rag.indexing.indexer.ollama_embed",
+                "local_code_context.indexing.indexer.ollama_embed",
                 side_effect=_fake_embeddings,
             ):
                 index_repos.index_file(
@@ -155,7 +155,7 @@ class WatchRepoTests(unittest.TestCase):
             file_a.write_text("def a():\n    return 10\n", encoding="utf-8")
 
             with patch(
-                "local_code_rag.indexing.indexer.ollama_embed",
+                "local_code_context.indexing.indexer.ollama_embed",
                 side_effect=_fake_embeddings,
             ):
                 counts = watch_repos._process_changes(  # noqa: SLF001
@@ -187,7 +187,7 @@ class WatchRepoTests(unittest.TestCase):
             manifest = {"files": {}}
 
             with patch(
-                "local_code_rag.indexing.indexer.ollama_embed",
+                "local_code_context.indexing.indexer.ollama_embed",
                 side_effect=_fake_embeddings,
             ):
                 index_repos.index_file(
@@ -203,7 +203,7 @@ class WatchRepoTests(unittest.TestCase):
                 )
 
             with patch(
-                "local_code_rag.indexing.indexer.ollama_embed",
+                "local_code_context.indexing.indexer.ollama_embed",
                 side_effect=_fake_embeddings,
             ):
                 counts = watch_repos._process_changes(  # noqa: SLF001

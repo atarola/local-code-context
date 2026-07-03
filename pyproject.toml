@@ -1,5 +1,5 @@
 [project]
-name = "local-code-rag"
+name = "local-code-context"
 version = "0.1.0"
 description = "Local multi-repo code retrieval with Chroma and Ollama"
 readme = "README.md"
@@ -15,10 +15,10 @@ dependencies = [
 ]
 
 [project.scripts]
-code-rag-index = "local_code_rag.indexing.indexer:main"
-code-rag-query = "local_code_rag.retrieval.query:main"
-code-rag-watch = "local_code_rag.indexing.watcher:main"
-code-rag-mcp = "local_code_rag.mcp.server:main"
+code-context-index = "local_code_context.indexing.indexer:main"
+code-context-query = "local_code_context.retrieval.query:main"
+code-context-watch = "local_code_context.indexing.watcher:main"
+code-context-mcp = "local_code_context.mcp.server:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -31,7 +31,7 @@ where = ["src"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-"local_code_rag.syntax.queries" = ["*.scm"]
+"local_code_context.syntax.queries" = ["*.scm"]
 
 [tool.uv]
 package = true

@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from local_code_rag.syntax.capture_models import QueryLanguageHooks
-from local_code_rag.syntax.capture_normalization import (
+from local_code_context.syntax.capture_models import QueryLanguageHooks
+from local_code_context.syntax.capture_normalization import (
     PythonTagQueryExtractor,
     TagQueryExtractor,
     _comparison_gap,
@@ -12,14 +12,14 @@ from local_code_rag.syntax.capture_normalization import (
     _records_to_strings,
     _symbols_to_strings,
 )
-from local_code_rag.syntax.capture_normalization import load_tags_query as _load_tags_query
-from local_code_rag.syntax.legacy_python import PythonSyntaxExtractor
-from local_code_rag.syntax.models import (
+from local_code_context.syntax.capture_normalization import load_tags_query as _load_tags_query
+from local_code_context.syntax.legacy_python import PythonSyntaxExtractor
+from local_code_context.syntax.models import (
     ComparisonGap,
     ExtractionComparison,
     ExtractionResult,
 )
-from local_code_rag.syntax.rendering import build_structural_records
+from local_code_context.syntax.rendering import build_structural_records
 
 
 def load_python_tags_query() -> str | None:

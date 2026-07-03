@@ -23,7 +23,7 @@ class MCPTransportTests(unittest.TestCase):
                 [
                     sys.executable,
                     "-m",
-                    "local_code_rag.mcp.server",
+                    "local_code_context.mcp.server",
                     "--db",
                     tmpdir,
                 ],
@@ -50,7 +50,7 @@ class MCPTransportTests(unittest.TestCase):
                 self.assertEqual(response["jsonrpc"], "2.0")
                 self.assertEqual(response["id"], 1)
                 self.assertEqual(
-                    response["result"]["serverInfo"]["name"], "local-code-rag"
+                    response["result"]["serverInfo"]["name"], "local-code-context"
                 )
 
                 tools_list = {

@@ -5,19 +5,19 @@ import sys
 from functools import lru_cache
 from typing import Any, Iterable
 
-from local_code_rag.syntax.capture_models import (
+from local_code_context.syntax.capture_models import (
     CapturedImport,
     CapturedSymbol,
     CaptureSource,
     ExtractionContext,
     QueryLanguageHooks,
 )
-from local_code_rag.syntax.hooks import QUERY_LANGUAGE_HOOKS
-from local_code_rag.syntax.models import CodeImport, CodeSymbol, ExtractionResult
-from local_code_rag.syntax.models import ComparisonGap
-from local_code_rag.syntax.parsers import get_parser_registry
-from local_code_rag.syntax.queries import load_tags_query
-from local_code_rag.syntax.legacy_python import (
+from local_code_context.syntax.hooks import QUERY_LANGUAGE_HOOKS
+from local_code_context.syntax.models import CodeImport, CodeSymbol, ExtractionResult
+from local_code_context.syntax.models import ComparisonGap
+from local_code_context.syntax.parsers import get_parser_registry
+from local_code_context.syntax.queries import load_tags_query
+from local_code_context.syntax.legacy_python import (
     _assignment_name,
     _collapse_signature,
     _definition_node,

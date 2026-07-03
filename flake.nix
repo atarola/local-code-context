@@ -24,7 +24,7 @@
         in
         {
           default = py.buildPythonApplication {
-            pname = "local-code-rag";
+            pname = "local-code-context";
             version = "0.1.0";
             pyproject = true;
 
@@ -44,25 +44,25 @@
             ];
 
             pythonImportsCheck = [
-              "local_code_rag.syntax.detection"
-              "local_code_rag.indexing.indexer"
-              "local_code_rag.indexing.watcher"
-              "local_code_rag.mcp.context"
-              "local_code_rag.mcp.server"
-              "local_code_rag.syntax.legacy_python"
-              "local_code_rag.syntax.rendering"
-              "local_code_rag.syntax.models"
-              "local_code_rag.syntax.indexer"
-              "local_code_rag.retrieval.query"
-              "local_code_rag.syntax.parsers"
-              "local_code_rag.syntax.extraction"
-              "local_code_rag.syntax.queries"
+              "local_code_context.syntax.detection"
+              "local_code_context.indexing.indexer"
+              "local_code_context.indexing.watcher"
+              "local_code_context.mcp.context"
+              "local_code_context.mcp.server"
+              "local_code_context.syntax.legacy_python"
+              "local_code_context.syntax.rendering"
+              "local_code_context.syntax.models"
+              "local_code_context.syntax.indexer"
+              "local_code_context.retrieval.query"
+              "local_code_context.syntax.parsers"
+              "local_code_context.syntax.extraction"
+              "local_code_context.syntax.queries"
             ];
 
             meta = {
               description = "Local multi-repo code retrieval with Chroma and Ollama";
               license = pkgs.lib.licenses.mit;
-              mainProgram = "code-rag-query";
+              mainProgram = "code-context-query";
             };
           };
         }
@@ -78,11 +78,11 @@
           };
         in
         {
-          default = app "code-rag-query";
-          index = app "code-rag-index";
-          mcp = app "code-rag-mcp";
-          query = app "code-rag-query";
-          watch = app "code-rag-watch";
+          default = app "code-context-query";
+          index = app "code-context-index";
+          mcp = app "code-context-mcp";
+          query = app "code-context-query";
+          watch = app "code-context-watch";
         }
       );
 
@@ -105,7 +105,7 @@
           ];
           commonShellHook = ''
             export OLLAMA_HOST=''${OLLAMA_HOST:-127.0.0.1:11434}
-            export LOCAL_CODE_RAG_OLLAMA_URL="http://$OLLAMA_HOST"
+            export LOCAL_CODE_CONTEXT_OLLAMA_URL="http://$OLLAMA_HOST"
 
             ollama-up() {
               systemctl --user start ollama
@@ -162,7 +162,7 @@
           ...
         }:
         let
-          cfg = config.services.local-code-rag;
+          cfg = config.services.local-code-context;
           package = cfg.package;
           repoArgs = lib.concatMapStringsSep " " (repo: "--repo ${lib.escapeShellArg repo}") cfg.repos;
           workspaceArgs = lib.concatMapStringsSep " " (
@@ -190,14 +190,14 @@
           systemctlStatus = if cfg.ollamaServiceScope == "user" then "systemctl --user" else "systemctl";
         in
         {
-          options.services.local-code-rag = {
-            enable = lib.mkEnableOption "local multi-repo code RAG watcher";
+          options.services.local-code-context = {
+            enable = lib.mkEnableOption "local multi-repo code context watcher";
 
             package = lib.mkOption {
               type = lib.types.package;
               default = self.packages.${pkgs.system}.default;
-              defaultText = lib.literalExpression "inputs.local-code-rag.packages.\${pkgs.system}.default";
-              description = "local-code-rag package to install and run.";
+              defaultText = lib.literalExpression "inputs.local-code-context.packages.\${pkgs.system}.default";
+              description = "local-code-context package to install and run.";
             };
 
             repos = lib.mkOption {
@@ -221,8 +221,8 @@
 
             db = lib.mkOption {
               type = lib.types.str;
-              default = "${config.home.homeDirectory}/.local/share/local-code-rag/codebase_index";
-              defaultText = lib.literalExpression ''"''${config.home.homeDirectory}/.local/share/local-code-rag/codebase_index"'';
+              default = "${config.home.homeDirectory}/.local/share/local-code-context/codebase_index";
+              defaultText = lib.literalExpression ''"''${config.home.homeDirectory}/.local/share/local-code-context/codebase_index"'';
               description = "Persistent Chroma database directory.";
             };
 
@@ -323,7 +323,7 @@
             assertions = [
               {
                 assertion = cfg.repos != [ ] || cfg.workspaces != [ ];
-                message = "services.local-code-rag.repos or services.local-code-rag.workspaces must contain at least one path.";
+                message = "services.local-code-context.repos or services.local-code-context.workspaces must contain at least one path.";
               }
             ];
 
@@ -332,9 +332,9 @@
             ]
             ++ lib.optional cfg.installOllama cfg.ollamaPackage;
 
-            systemd.user.services.local-code-rag-watch = {
+            systemd.user.services.local-code-context-watch = {
               Unit = {
-                Description = "Local code RAG Chroma index watcher";
+                Description = "Local code context Chroma index watcher";
                 After = [
                   "network-online.target"
                   "${cfg.ollamaServiceName}.service"
@@ -344,7 +344,7 @@
               Service = {
                 Type = "simple";
                 WorkingDirectory = cfg.workingDirectory;
-                ExecStart = "${package}/bin/code-rag-watch ${watchArgs}";
+                ExecStart = "${package}/bin/code-context-watch ${watchArgs}";
                 Environment = environmentList;
                 Restart = "on-failure";
                 RestartSec = "10s";
@@ -378,13 +378,10 @@
               ollama-up = "${systemctl} start ${cfg.ollamaServiceName}";
               ollama-down = "${systemctl} stop ${cfg.ollamaServiceName}";
               ollama-status = "${systemctlStatus} status ${cfg.ollamaServiceName} --no-pager --lines=12";
-              code-up = "${systemctl} start ${cfg.ollamaServiceName} && systemctl --user start local-code-rag-watch";
-              code-down = "systemctl --user stop local-code-rag-watch; ${systemctl} stop ${cfg.ollamaServiceName}";
-              code-status = "${systemctlStatus} status ${cfg.ollamaServiceName} --no-pager --lines=8; systemctl --user status local-code-rag-watch --no-pager --lines=8";
-              code-rag-up = "systemctl --user start local-code-rag-watch";
-              code-rag-status = "systemctl --user status local-code-rag-watch";
-              code-rag-down = "systemctl --user stop local-code-rag-watch";
-              code-rag-logs = "journalctl --user -u local-code-rag-watch -f";
+              code-context-up = "systemctl --user start local-code-context-watch";
+              code-context-status = "systemctl --user status local-code-context-watch";
+              code-context-down = "systemctl --user stop local-code-context-watch";
+              code-context-logs = "journalctl --user -u local-code-context-watch -f";
             };
           };
         };

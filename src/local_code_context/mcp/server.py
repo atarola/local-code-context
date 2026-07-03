@@ -8,13 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from local_code_rag.mcp.context import (
+from local_code_context.mcp.context import (
     get_repository_context,
     get_workspace_context,
     list_indexed_repositories,
     search_code,
 )
-from local_code_rag.retrieval.query import (
+from local_code_context.retrieval.query import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_COLLECTION,
     DEFAULT_DB,
@@ -23,7 +23,7 @@ from local_code_rag.retrieval.query import (
 )
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_NAME = "local-code-rag"
+SERVER_NAME = "local-code-context"
 SERVER_VERSION = "0.3.0"
 
 
@@ -346,7 +346,7 @@ def _handle_message(config: ServerConfig, message: dict[str, Any]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Expose local-code-rag as an MCP server over stdio."
+        description="Expose local-code-context as an MCP server over stdio."
     )
     parser.add_argument(
         "--db", default=DEFAULT_DB, help=f"Chroma DB directory. Default: {DEFAULT_DB}"

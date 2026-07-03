@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from local_code_rag.indexing.indexer import (
+from local_code_context.indexing.indexer import (
     SKIP_SUFFIXES as IGNORED_SUFFIXES,
     iter_files,
     should_skip_path,
 )
-from local_code_rag.retrieval.query import build_context, search_chunks
+from local_code_context.retrieval.query import build_context, search_chunks
 
 
 IMPORTANT_FILES = [
@@ -137,7 +137,7 @@ def _require_repo_root(config: Any, repo: str) -> Path:
     if record.repo_root is None:
         raise ValueError(
             f"repository root is missing from the index metadata for {repo!r}. "
-            "Rebuild the index with a newer version of local-code-rag."
+            "Rebuild the index with a newer version of local-code-context."
         )
     root = record.repo_root.expanduser().resolve()
     if not root.exists() or not root.is_dir():

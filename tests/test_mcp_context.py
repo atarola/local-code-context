@@ -14,8 +14,8 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from local_code_rag.mcp import context as mcp_context  # noqa: E402
-from local_code_rag.mcp import server as mcp_server  # noqa: E402
+from local_code_context.mcp import context as mcp_context  # noqa: E402
+from local_code_context.mcp import server as mcp_server  # noqa: E402
 
 
 class FakeCollection:
@@ -48,7 +48,7 @@ class MCPContextTests(unittest.TestCase):
             ]
         )
         config = _config("/tmp/db")
-        with patch("local_code_rag.mcp.context._open_collection", return_value=fake):
+        with patch("local_code_context.mcp.context._open_collection", return_value=fake):
             self.assertEqual(
                 mcp_context.list_indexed_repositories(config), ["alpha", "beta"]
             )
@@ -56,7 +56,7 @@ class MCPContextTests(unittest.TestCase):
     def test_repository_root_validation(self) -> None:
         fake = FakeCollection([{"repo": "alpha", "path": "a.py"}])
         config = _config("/tmp/db")
-        with patch("local_code_rag.mcp.context._open_collection", return_value=fake):
+        with patch("local_code_context.mcp.context._open_collection", return_value=fake):
             with self.assertRaisesRegex(ValueError, "repository root is missing"):
                 mcp_context.get_repository_context(config, "alpha")
 
@@ -65,14 +65,14 @@ class MCPContextTests(unittest.TestCase):
             [{"repo": "alpha", "repo_root": "/tmp/alpha", "path": "a.py"}]
         )
         config = _config("/tmp/db")
-        with patch("local_code_rag.mcp.context._open_collection", return_value=fake):
+        with patch("local_code_context.mcp.context._open_collection", return_value=fake):
             with self.assertRaisesRegex(ValueError, "is not indexed"):
                 mcp_context.get_repository_context(config, "beta")
 
     def test_old_index_records_without_repo_root(self) -> None:
         fake = FakeCollection([{"repo": "alpha", "path": "a.py"}])
         config = _config("/tmp/db")
-        with patch("local_code_rag.mcp.context._open_collection", return_value=fake):
+        with patch("local_code_context.mcp.context._open_collection", return_value=fake):
             self.assertEqual(mcp_context.list_indexed_repositories(config), ["alpha"])
             with self.assertRaisesRegex(ValueError, "repository root is missing"):
                 mcp_context.get_repository_context(config, "alpha")
@@ -155,7 +155,7 @@ class MCPContextTests(unittest.TestCase):
             )
             config = _config("/tmp/db")
             with patch(
-                "local_code_rag.mcp.context._open_collection", return_value=fake
+                "local_code_context.mcp.context._open_collection", return_value=fake
             ):
                 text = mcp_context.get_repository_context(
                     config, "demo", max_chars=10_000
@@ -183,7 +183,7 @@ class MCPContextTests(unittest.TestCase):
             )
             config = _config("/tmp/db")
             with patch(
-                "local_code_rag.mcp.context._open_collection", return_value=fake
+                "local_code_context.mcp.context._open_collection", return_value=fake
             ):
                 text = mcp_context.get_workspace_context(
                     config, max_chars_per_repo=2_000
@@ -212,10 +212,10 @@ class MCPContextTests(unittest.TestCase):
             ]
 
         with patch(
-            "local_code_rag.mcp.context.search_chunks", side_effect=fake_search_chunks
+            "local_code_context.mcp.context.search_chunks", side_effect=fake_search_chunks
         ):
             with patch(
-                "local_code_rag.retrieval.query.ollama_chat",
+                "local_code_context.retrieval.query.ollama_chat",
                 side_effect=AssertionError("should not be called"),
             ):
                 text_all = mcp_context.search_code(config, q="sample query")
@@ -232,7 +232,7 @@ class MCPContextTests(unittest.TestCase):
 
     def test_no_ollama_chat_during_retrieval_tools(self) -> None:
         with patch(
-            "local_code_rag.retrieval.query.ollama_chat",
+            "local_code_context.retrieval.query.ollama_chat",
             side_effect=AssertionError("ollama_chat should not be called"),
         ):
             fake = FakeCollection(
@@ -240,15 +240,15 @@ class MCPContextTests(unittest.TestCase):
             )
             config = _config("/tmp/db")
             with patch(
-                "local_code_rag.mcp.context._open_collection", return_value=fake
+                "local_code_context.mcp.context._open_collection", return_value=fake
             ):
                 text = mcp_server._call_tool(config, "list_repositories", {})  # noqa: SLF001
                 self.assertIn("Indexed repositories:", text)
 
             with patch(
-                "local_code_rag.mcp.context._open_collection", return_value=fake
+                "local_code_context.mcp.context._open_collection", return_value=fake
             ):
-                with patch("local_code_rag.mcp.context.search_chunks", return_value=[]):
+                with patch("local_code_context.mcp.context.search_chunks", return_value=[]):
                     text = mcp_server._call_tool(config, "search_code", {"q": "demo"})  # noqa: SLF001
                     self.assertIn("Retrieved sources", text)
 

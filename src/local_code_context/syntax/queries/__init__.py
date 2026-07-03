@@ -19,7 +19,7 @@ def load_tags_query(language: str) -> str | None:
 
     try:
         return (
-            files("local_code_rag.syntax.queries")
+            files("local_code_context.syntax.queries")
             .joinpath(resource_name)
             .read_text(encoding="utf-8")
         )

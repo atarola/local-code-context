@@ -2,7 +2,7 @@
 
 ## Python Tree-sitter tag query
 
-`src/local_code_rag/syntax/queries/python-tags.scm`
+`src/local_code_context/syntax/queries/python-tags.scm`
 
 Derived from the Python tag query distributed by Aider:
 
@@ -32,7 +32,7 @@ Copyright and license notices are retained under the terms of the MIT License.
 
 ## Rust Tree-sitter tag query
 
-`src/local_code_rag/syntax/queries/rust-tags.scm`
+`src/local_code_context/syntax/queries/rust-tags.scm`
 
 Derived from the Rust tag query distributed by Aider:
 

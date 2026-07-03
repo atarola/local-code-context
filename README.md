@@ -1,4 +1,4 @@
-# Local multi-repo code RAG
+# Local multi-repo code context
 
 A minimal retrieval setup so a 12GB-VRAM local model can reason across
 multiple codebases without needing them all loaded into its context window
@@ -7,7 +7,7 @@ those chunks to the model.
 
 ## How it works
 
-1. `local_code_rag.index_repos` walks each repo you point it at, splits files into
+1. `local_code_context.index_repos` walks each repo you point it at, splits files into
    roughly 60-line chunks, embeds each chunk with a small local embedding
    model (`nomic-embed-text`), and stores them in a local Chroma DB tagged
    with repo name, file path, and line range.
@@ -39,14 +39,14 @@ nix run .#mcp -- --db ./codebase_index
 ```
 
 Install from another flake by adding this repo as an input and using
-`inputs.local-code-rag.packages.${system}.default`.
+`inputs.local-code-context.packages.${system}.default`.
 
 The flake also exports a Home Manager module:
 
 ```nix
 {
-  inputs.local-code-rag = {
-    url = "github:atarola/local-code-rag";
+  inputs.local-code-context = {
+    url = "github:atarola/local-code-context";
     inputs.nixpkgs.follows = "nixpkgs";
   };
 }
@@ -59,15 +59,15 @@ Pass `inputs` to Home Manager and import the module from `home.nix`:
 
 {
   imports = [
-    inputs.local-code-rag.homeManagerModules.default
+    inputs.local-code-context.homeManagerModules.default
   ];
 
-  services.local-code-rag = {
+  services.local-code-context = {
     enable = true;
     workspaces = [
       "/home/your-user/code"
     ];
-    db = "/home/your-user/.local/share/local-code-rag/codebase_index";
+    db = "/home/your-user/.local/share/local-code-context/codebase_index";
     ollamaUrl = "http://127.0.0.1:11434";
 
     # Keep this false if you only want the watcher running when you start it.
@@ -84,9 +84,9 @@ Pass `inputs` to Home Manager and import the module from `home.nix`:
 With `autoStart = false`, start it manually as a user service:
 
 ```bash
-systemctl --user start local-code-rag-watch
-systemctl --user status local-code-rag-watch
-systemctl --user stop local-code-rag-watch
+systemctl --user start local-code-context-watch
+systemctl --user status local-code-context-watch
+systemctl --user stop local-code-context-watch
 ```
 
 The Home Manager module also adds shell aliases by default:
@@ -95,18 +95,13 @@ The Home Manager module also adds shell aliases by default:
 ollama-up
 ollama-status
 ollama-down
-code-ai-up
-code-ai-status
-code-ai-down
-code-rag-up
-code-rag-status
-code-rag-down
-code-rag-logs
+code-context-up
+code-context-status
+code-context-down
+code-context-logs
 ```
 
-The `code-ai-*` aliases manage both services: they start Ollama first and the
-RAG watcher second, then stop the watcher before stopping Ollama. The
-`code-rag-*` aliases only manage the watcher, and `ollama-*` aliases only
+The `code-context-*` aliases manage the watcher, and `ollama-*` aliases only
 manage Ollama.
 
 The MCP server is separate from the watcher. It reads the same Chroma DB and
@@ -114,7 +109,7 @@ serves retrieval over stdio so Claude Code or another MCP client can ask for
 repo context before reasoning with an Ollama-backed model. Start it with:
 
 ```bash
-code-rag-mcp --db ./codebase_index
+code-context-mcp --db ./codebase_index
 ```
 
 or via Nix:
@@ -128,7 +123,7 @@ is configured elsewhere, for example with NixOS `services.ollama`. Set
 `ollamaServiceScope = "user";` and `manageOllama = true;` only if you want this
 Home Manager module to create a user service running `ollama serve`.
 
-Set `services.local-code-rag.shellAliases = false;` to skip them.
+Set `services.local-code-context.shellAliases = false;` to skip them.
 
 If you are running in a Nix shell and Chroma/NumPy fails to import with missing
 shared libraries such as `libstdc++.so.6` or `libz.so.1`, enter the provided
@@ -145,14 +140,14 @@ Index a workspace. Each immediate child directory containing `.git` is indexed
 as a separate repo:
 
 ```bash
-uv run code-rag-index --workspace /path/to/code --db ./codebase_index
+uv run code-context-index --workspace /path/to/code --db ./codebase_index
 ```
 
 Or index explicit repos. Repeat `--repo` for as many repos as you want in the
 same DB:
 
 ```bash
-uv run code-rag-index --repo /path/to/service-a --repo /path/to/service-b --db ./codebase_index
+uv run code-context-index --repo /path/to/service-a --repo /path/to/service-b --db ./codebase_index
 ```
 
 Re-run against a repo any time to refresh it after code changes. Indexing is
@@ -168,12 +163,12 @@ file.
 For git repositories, files ignored by `.gitignore` are excluded automatically.
 
 Use `--force` to ignore the manifest and re-embed everything, for example after
-changing `CHUNK_LINES` or `CHUNK_OVERLAP` in `src/local_code_rag/index_repos.py`.
+changing `CHUNK_LINES` or `CHUNK_OVERLAP` in `src/local_code_context/index_repos.py`.
 
 Ask a question that spans repos:
 
 ```bash
-uv run code-rag-query \
+uv run code-context-query \
   --db ./codebase_index \
   --q "Where does service-a's retry logic call into service-b's client, and could that cause the duplicate-write bug we're seeing?"
 ```
@@ -181,24 +176,24 @@ uv run code-rag-query \
 Restrict to one repo for a single-codebase review:
 
 ```bash
-uv run code-rag-query --db ./codebase_index --repo service-a --q "Review the error handling in the payment module"
+uv run code-context-query --db ./codebase_index --repo service-a --q "Review the error handling in the payment module"
 ```
 
 Only inspect retrieval hits without calling the chat model:
 
 ```bash
-uv run code-rag-query --db ./codebase_index --q "Where is retry handled?" --no-answer
+uv run code-context-query --db ./codebase_index --q "Where is retry handled?" --no-answer
 ```
 
 Print retrieved chunks before the model answer:
 
 ```bash
-uv run code-rag-query --db ./codebase_index --q "Where is retry handled?" --show-context
+uv run code-context-query --db ./codebase_index --q "Where is retry handled?" --show-context
 ```
 
 ## Tuning notes
 
-- `CHUNK_LINES` and `CHUNK_OVERLAP` in `src/local_code_rag/index_repos.py`: 60 and 10 are
+- `CHUNK_LINES` and `CHUNK_OVERLAP` in `src/local_code_context/index_repos.py`: 60 and 10 are
   reasonable defaults for most languages. Drop to about 30 lines for dense code
   and raise for verbose config-heavy files.
 - `--top-k` in `query.py`: more chunks means more cross-file context but also a
@@ -215,7 +210,7 @@ ollama run qwen2.5-coder:14b
 Then query with:
 
 ```bash
-uv run code-rag-query --model qwen2.5-coder-16k --db ./codebase_index --q "..."
+uv run code-context-query --model qwen2.5-coder-16k --db ./codebase_index --q "..."
 ```
 
 ## Privacy
