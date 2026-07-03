@@ -59,6 +59,22 @@ class BuildResult:
     fallback_reason: str | None = None
 
 
+@dataclass(frozen=True)
+class ComparisonGap:
+    field: str
+    legacy: tuple[str, ...]
+    query: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ExtractionComparison:
+    legacy: ExtractionResult
+    query: ExtractionResult
+    legacy_records: list[IndexRecord]
+    query_records: list[IndexRecord]
+    gaps: list[ComparisonGap]
+
+
 class LanguageExtractor(Protocol):
     def extract(
         self, source: bytes, tree: Any, relative_path: str

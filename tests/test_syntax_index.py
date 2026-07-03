@@ -19,10 +19,15 @@ from local_code_rag.syntax_index import (  # noqa: E402
     BuildResult,
     ParseQuality,
     build_index_records,
+    compare_python_extractions,
     evaluate_parse_quality,
     extract_python_imports,
     extract_python_symbols,
     make_chunk_id,
+)
+from local_code_rag.syntax_query import (  # noqa: E402
+    PythonTagQueryExtractor,
+    load_python_tags_query,
 )
 from local_code_rag.tree_sitter_support import ParserRegistry  # noqa: E402
 
@@ -55,6 +60,9 @@ class FakeNode:
         self.named_children = list(self.children)
         self._field_map = field_map or {}
         self.is_missing = is_missing
+        self.parent: FakeNode | None = None
+        for child in self.children:
+            child.parent = self
 
     def child_by_field_name(self, name: str) -> "FakeNode" | None:
         return self._field_map.get(name)
@@ -92,6 +100,14 @@ class FakeRegistry:
         if language == "python":
             return self.parser
         return None
+
+
+class FakeCaptureSource:
+    def __init__(self, captures: list[tuple[str, FakeNode]]) -> None:
+        self._captures = captures
+
+    def captures(self, tree: object):  # noqa: ARG002
+        return list(self._captures)
 
 
 def _line_offsets(text: str) -> list[tuple[int, int]]:
@@ -288,6 +304,138 @@ class SyntaxIndexTests(unittest.TestCase):
         self.assertEqual(imports[0].source, "os")
         self.assertEqual(imports[1].source, "pkg.mod")
         self.assertEqual(imports[1].imported_names, ("thing", "other"))
+
+    def test_python_tags_query_loader(self) -> None:
+        query = load_python_tags_query()
+        self.assertIsInstance(query, str)
+        self.assertIn("definition.class", query)
+        self.assertIn("definition.function", query)
+        self.assertIn("reference.call", query)
+
+    def test_generic_query_extractor_matches_legacy_fixture(self) -> None:
+        source = _sample_source().encode("utf-8")
+        tree = _sample_tree()
+        root = tree.root_node
+        captures = [
+            ("definition.module", root),
+            ("reference.import", root.children[0]),
+            ("reference.import", root.children[1]),
+            ("definition.class", root.children[3]),
+            ("definition.method", root.children[3].children[0].children[0].children[0]),
+            ("definition.function", root.children[4]),
+            ("definition.function", root.children[5]),
+        ]
+        extractor = PythonTagQueryExtractor(capture_source=FakeCaptureSource(captures))
+        legacy_symbols = extract_python_symbols(source, tree, "demo.py")
+        legacy_imports = extract_python_imports(source, tree, "demo.py")
+        query = extractor.extract(source, tree, "demo.py")
+
+        self.assertEqual(
+            [(item.kind, item.name, item.parent) for item in query.symbols],
+            [(item.kind, item.name, item.parent) for item in legacy_symbols],
+        )
+        self.assertEqual(
+            [
+                (item.source, item.imported_names, item.start_line)
+                for item in query.imports
+            ],
+            [
+                (item.source, item.imported_names, item.start_line)
+                for item in legacy_imports
+            ],
+        )
+
+    def test_query_comparison_reports_parity_gaps(self) -> None:
+        source = _sample_source().encode("utf-8")
+        tree = _sample_tree()
+        root = tree.root_node
+        captures = [
+            ("definition.class", root.children[3]),
+            ("definition.function", root.children[4]),
+        ]
+        comparison = compare_python_extractions(
+            source,
+            tree,
+            "demo.py",
+            capture_source=FakeCaptureSource(captures),
+        )
+
+        self.assertTrue(comparison.gaps)
+        self.assertTrue(any(gap.field == "symbol names" for gap in comparison.gaps))
+
+    def test_query_mode_matches_legacy_records_when_captures_match(self) -> None:
+        source = _sample_source().encode("utf-8")
+        tree = _sample_tree()
+        root = tree.root_node
+        captures = [
+            ("definition.module", root),
+            ("reference.import", root.children[0]),
+            ("reference.import", root.children[1]),
+            ("definition.class", root.children[3]),
+            ("definition.method", root.children[3].children[0].children[0].children[0]),
+            ("definition.function", root.children[4]),
+            ("definition.function", root.children[5]),
+        ]
+        registry = FakeRegistry(FakeParser(tree))
+        query_extractor = PythonTagQueryExtractor(
+            capture_source=FakeCaptureSource(captures)
+        )
+        original = build_index_records(
+            repo="demo",
+            repo_root=Path("/tmp/demo"),
+            path=Path("/tmp/demo/demo.py"),
+            source=source,
+            text=_sample_source(),
+            parser_registry=registry,
+        )
+        with patch.dict(
+            "local_code_rag.syntax_index.QUERY_EXTRACTORS",
+            {"python": query_extractor},
+        ):
+            queried = build_index_records(
+                repo="demo",
+                repo_root=Path("/tmp/demo"),
+                path=Path("/tmp/demo/demo.py"),
+                source=source,
+                text=_sample_source(),
+                parser_registry=registry,
+                python_extractor_mode="query",
+            )
+
+        self.assertEqual(
+            [record.id for record in original.records],
+            [record.id for record in queried.records],
+        )
+        self.assertEqual(
+            [record.document for record in original.records],
+            [record.document for record in queried.records],
+        )
+
+    def test_query_mode_falls_back_to_legacy_on_query_failure(self) -> None:
+        source = _sample_source().encode("utf-8")
+        tree = _sample_tree()
+        registry = FakeRegistry(FakeParser(tree))
+        query_extractor = PythonTagQueryExtractor(capture_source=FakeCaptureSource([]))
+        with patch.dict(
+            "local_code_rag.syntax_index.QUERY_EXTRACTORS",
+            {"python": query_extractor},
+        ):
+            result = build_index_records(
+                repo="demo",
+                repo_root=Path("/tmp/demo"),
+                path=Path("/tmp/demo/demo.py"),
+                source=source,
+                text=_sample_source(),
+                parser_registry=registry,
+                python_extractor_mode="query",
+            )
+
+        self.assertTrue(result.records)
+        self.assertTrue(
+            any(
+                record.metadata["chunk_type"] == "file_map" for record in result.records
+            )
+        )
 
     def test_compact_signatures(self) -> None:
         long_args = ", ".join(f"arg{i}" for i in range(50))

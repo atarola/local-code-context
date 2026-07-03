@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from local_code_rag.languages import detect_language
@@ -14,10 +15,15 @@ from local_code_rag.syntax_chunks import (
     build_text_fallback_records,
     make_chunk_id,
 )
+from local_code_rag.syntax_query import (
+    PythonTagQueryExtractor,
+    compare_python_extractions,
+)
 from local_code_rag.syntax_models import (
     BuildResult,
     CodeImport,
     CodeSymbol,
+    ComparisonGap,
     ExtractionResult,
     INDEX_SCHEMA_VERSION,
     IndexRecord,
@@ -36,6 +42,10 @@ MAX_PARSE_ERROR_RATIO = 0.35
 
 EXTRACTORS: dict[str, LanguageExtractor] = {
     "python": PythonSyntaxExtractor(),
+}
+
+QUERY_EXTRACTORS: dict[str, PythonTagQueryExtractor] = {
+    "python": PythonTagQueryExtractor(),
 }
 
 
@@ -100,6 +110,19 @@ def _extractor_for_language(language: str) -> LanguageExtractor | None:
     return EXTRACTORS.get(language.lower())
 
 
+def _query_extractor_for_language(language: str) -> PythonTagQueryExtractor | None:
+    return QUERY_EXTRACTORS.get(language.lower())
+
+
+def _compare_gaps_to_text(gaps: list[ComparisonGap]) -> None:
+    for gap in gaps:
+        print(
+            f"python query parity gap ({gap.field}): "
+            f"legacy={list(gap.legacy)} query={list(gap.query)}",
+            file=sys.stderr,
+        )
+
+
 def _build_python_records(
     *,
     repo: str,
@@ -108,6 +131,7 @@ def _build_python_records(
     source: bytes,
     text: str,
     parser_registry: ParserRegistry | None = None,
+    python_extractor_mode: str = "legacy",
 ) -> BuildResult:
     registry = parser_registry or get_parser_registry()
     parser = registry.get("python")
@@ -123,6 +147,21 @@ def _build_python_records(
             ),
             language="python",
             fallback_reason="python parser unavailable",
+        )
+
+    legacy_extractor = _extractor_for_language("python")
+    if legacy_extractor is None:
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language="python",
+                reason="python extractor unavailable",
+            ),
+            language="python",
+            fallback_reason="python extractor unavailable",
         )
 
     try:
@@ -161,38 +200,93 @@ def _build_python_records(
             fallback_reason=reason,
         )
 
-    extractor = _extractor_for_language("python")
-    if extractor is None:
-        return BuildResult(
-            records=build_text_fallback_records(
-                repo=repo,
-                repo_root=repo_root,
-                relative_path=relative_path,
-                text=text,
+    mode = python_extractor_mode.lower()
+    if mode not in {"legacy", "query", "compare"}:
+        mode = "legacy"
+
+    if mode == "legacy":
+        try:
+            extraction = legacy_extractor.extract(source, tree, relative_path)
+        except Exception as exc:
+            return BuildResult(
+                records=build_text_fallback_records(
+                    repo=repo,
+                    repo_root=repo_root,
+                    relative_path=relative_path,
+                    text=text,
+                    language="python",
+                    reason=f"python extractor failed: {exc}",
+                ),
                 language="python",
-                reason="python extractor unavailable",
-            ),
+                fallback_reason=str(exc),
+            )
+
+        if not extraction.symbols:
+            return BuildResult(
+                records=build_text_fallback_records(
+                    repo=repo,
+                    repo_root=repo_root,
+                    relative_path=relative_path,
+                    text=text,
+                    language="python",
+                    reason="no useful Python symbols extracted",
+                ),
+                language="python",
+                fallback_reason="no useful Python symbols extracted",
+            )
+
+        records = build_structural_records(
+            repo=repo,
+            repo_root=repo_root,
+            relative_path=relative_path,
             language="python",
-            fallback_reason="python extractor unavailable",
+            source=source,
+            symbols=extraction.symbols,
+            imports=extraction.imports,
+        )
+        return BuildResult(records=records, language="python", fallback_reason=None)
+
+    query_extractor = _query_extractor_for_language("python")
+    if query_extractor is None:
+        print(
+            f"python tags query unavailable for {repo}:{relative_path}; falling back to legacy extractor",
+            file=sys.stderr,
+        )
+        return _build_python_records(
+            repo=repo,
+            repo_root=repo_root,
+            relative_path=relative_path,
+            source=source,
+            text=text,
+            parser_registry=parser_registry,
+            python_extractor_mode="legacy",
         )
 
     try:
-        extraction = extractor.extract(source, tree, relative_path)
+        comparison = compare_python_extractions(
+            source,
+            tree,
+            relative_path,
+            repo=repo,
+            repo_root=repo_root,
+            capture_source=query_extractor._capture_source_or_default(),  # type: ignore[attr-defined]
+        )
     except Exception as exc:
-        return BuildResult(
-            records=build_text_fallback_records(
-                repo=repo,
-                repo_root=repo_root,
-                relative_path=relative_path,
-                text=text,
-                language="python",
-                reason=f"python extractor failed: {exc}",
-            ),
-            language="python",
-            fallback_reason=str(exc),
+        print(
+            f"python tags query failed for {repo}:{relative_path}: {exc}; falling back to legacy extractor",
+            file=sys.stderr,
+        )
+        return _build_python_records(
+            repo=repo,
+            repo_root=repo_root,
+            relative_path=relative_path,
+            source=source,
+            text=text,
+            parser_registry=parser_registry,
+            python_extractor_mode="legacy",
         )
 
-    if not extraction.symbols:
+    if not comparison.legacy.symbols:
         return BuildResult(
             records=build_text_fallback_records(
                 repo=repo,
@@ -206,16 +300,44 @@ def _build_python_records(
             fallback_reason="no useful Python symbols extracted",
         )
 
-    records = build_structural_records(
-        repo=repo,
-        repo_root=repo_root,
-        relative_path=relative_path,
+    if comparison.gaps:
+        _compare_gaps_to_text(comparison.gaps)
+        if mode == "query":
+            return _build_python_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                source=source,
+                text=text,
+                parser_registry=parser_registry,
+                python_extractor_mode="legacy",
+            )
+
+    if not comparison.query.symbols:
+        print(
+            f"python tags query produced no symbols for {repo}:{relative_path}; falling back to legacy extractor",
+            file=sys.stderr,
+        )
+        return _build_python_records(
+            repo=repo,
+            repo_root=repo_root,
+            relative_path=relative_path,
+            source=source,
+            text=text,
+            parser_registry=parser_registry,
+            python_extractor_mode="legacy",
+        )
+
+    if mode == "compare":
+        return BuildResult(
+            records=comparison.legacy_records, language="python", fallback_reason=None
+        )
+
+    return BuildResult(
+        records=comparison.query_records,
         language="python",
-        source=source,
-        symbols=extraction.symbols,
-        imports=extraction.imports,
+        fallback_reason=None,
     )
-    return BuildResult(records=records, language="python", fallback_reason=None)
 
 
 def build_index_records(
@@ -226,6 +348,7 @@ def build_index_records(
     source: bytes,
     text: str,
     parser_registry: ParserRegistry | None = None,
+    python_extractor_mode: str = "legacy",
 ) -> BuildResult:
     relative_path = path.relative_to(repo_root).as_posix()
     language = detect_language(path, source, repository_hints={repo})
@@ -237,6 +360,7 @@ def build_index_records(
             source=source,
             text=text,
             parser_registry=parser_registry,
+            python_extractor_mode=python_extractor_mode,
         )
 
     reason = (
@@ -260,15 +384,18 @@ __all__ = [
     "BuildResult",
     "CodeImport",
     "CodeSymbol",
+    "ComparisonGap",
     "ExtractionResult",
     "INDEX_SCHEMA_VERSION",
     "IndexRecord",
     "MAX_SIGNATURE_CHARS",
     "ParseQuality",
     "build_index_records",
+    "compare_python_extractions",
     "evaluate_parse_quality",
     "extract_python_imports",
     "extract_python_symbols",
     "make_chunk_id",
+    "PythonTagQueryExtractor",
     "walk_tree",
 ]
