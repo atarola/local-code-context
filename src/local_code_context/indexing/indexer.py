@@ -380,6 +380,7 @@ def index_file(
     ids: list[str] = [record.id for record in records]
     documents: list[str] = [record.document for record in records]
     metadatas: list[dict[str, Any]] = [record.metadata for record in records]
+
     embeddings: list[list[float]] = []
     for start in range(0, len(documents), EMBED_BATCH_SIZE):
         batch = documents[start : start + EMBED_BATCH_SIZE]

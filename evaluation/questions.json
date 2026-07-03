@@ -1,0 +1,230 @@
+[
+  {
+    "qid": "ES-1",
+    "text": "Find the function search_chunks",
+    "category": "exact-symbol",
+    "expected_repo": "local-code-context",
+    "expected_paths": ["src/local_code_context/retrieval/query.py"],
+    "expected_symbols": ["search_chunks"],
+    "notes": ""
+  },
+  {
+    "qid": "ES-2",
+    "text": "Find the function build_index_records",
+    "category": "exact-symbol",
+    "expected_repo": "local-code-context",
+    "expected_paths": ["src/local_code_context/syntax/indexer.py"],
+    "expected_symbols": ["build_index_records"],
+    "notes": ""
+  },
+  {
+    "qid": "ES-3",
+    "text": "Find the class BaseTest",
+    "category": "exact-symbol",
+    "expected_repo": "compy6502",
+    "expected_paths": ["test/asm/unit/base.py"],
+    "expected_symbols": ["BaseTest"],
+    "notes": ""
+  },
+  {
+    "qid": "ES-4",
+    "text": "Find the label WOZMON_START",
+    "category": "exact-symbol",
+    "expected_repo": "compy6502",
+    "expected_paths": ["src/asm/eeprom/wozmon.s"],
+    "expected_symbols": ["WOZMON_START"],
+    "notes": ""
+  },
+  {
+    "qid": "ES-5",
+    "text": "Find the function get_symbol",
+    "category": "exact-symbol",
+    "expected_repo": "local-code-context",
+    "expected_paths": ["src/local_code_context/mcp/symbols.py"],
+    "expected_symbols": ["get_symbol"],
+    "notes": ""
+  },
+  {
+    "qid": "ES-6",
+    "text": "Find the function convert_file",
+    "category": "exact-symbol",
+    "expected_repo": "compy6502",
+    "expected_paths": ["src/tools/srec.py"],
+    "expected_symbols": ["convert_file"],
+    "notes": ""
+  },
+  {
+    "qid": "ES-7",
+    "text": "Find the class ParserRegistry",
+    "category": "exact-symbol",
+    "expected_repo": "local-code-context",
+    "expected_paths": ["src/local_code_context/syntax/parsers.py"],
+    "expected_symbols": ["ParserRegistry"],
+    "notes": ""
+  },
+  {
+    "qid": "ES-8",
+    "text": "Find the label SREC_LOAD",
+    "category": "exact-symbol",
+    "expected_repo": "compy6502",
+    "expected_paths": ["src/asm/eeprom/kernel/loader.s"],
+    "expected_symbols": ["SREC_LOAD"],
+    "notes": ""
+  },
+  {
+    "qid": "CI-1",
+    "text": "How are source files chunked into overlapping segments for indexing?",
+    "category": "conceptual",
+    "expected_repo": "local-code-context",
+    "expected_paths": ["src/local_code_context/syntax/rendering.py"],
+    "expected_symbols": ["chunk_text", "CHUNK_LINES", "CHUNK_OVERLAP"],
+    "notes": ""
+  },
+  {
+    "qid": "CI-2",
+    "text": "How does the indexer decide which files and directories to skip?",
+    "category": "conceptual",
+    "expected_repo": "local-code-context",
+    "expected_paths": ["src/local_code_context/indexing/indexer.py"],
+    "expected_symbols": ["should_skip_path", "SKIP_DIRS", "SKIP_SUFFIXES"],
+    "notes": ""
+  },
+  {
+    "qid": "CI-3",
+    "text": "How are Motorola S-record files generated from assembly listings?",
+    "category": "conceptual",
+    "expected_repo": "compy6502",
+    "expected_paths": ["src/tools/srec.py"],
+    "expected_symbols": ["convert_file", "srecord", "parse_line"],
+    "notes": ""
+  },
+  {
+    "qid": "CI-4",
+    "text": "How does the serial upload tool send S-records to the 6502?",
+    "category": "conceptual",
+    "expected_repo": "compy6502",
+    "expected_paths": ["src/tools/upload.py"],
+    "expected_symbols": ["upload_records", "send_records", "send_line"],
+    "notes": ""
+  },
+  {
+    "qid": "CI-5",
+    "text": "How does the symbol retrieval handle multi-part split symbols?",
+    "category": "conceptual",
+    "expected_repo": "local-code-context",
+    "expected_paths": ["src/local_code_context/mcp/symbols.py"],
+    "expected_symbols": ["_subdivide_part_groups", "_format_multipart", "get_symbol"],
+    "notes": ""
+  },
+  {
+    "qid": "CI-6",
+    "text": "How does the watcher process file change events?",
+    "category": "conceptual",
+    "expected_repo": "local-code-context",
+    "expected_paths": ["src/local_code_context/indexing/watcher.py"],
+    "expected_symbols": ["_process_changes", "run_watch"],
+    "notes": ""
+  },
+  {
+    "qid": "CI-7",
+    "text": "How does the test framework set up a 6502 CPU and run a subroutine?",
+    "category": "conceptual",
+    "expected_repo": "compy6502",
+    "expected_paths": ["test/asm/unit/base.py"],
+    "expected_symbols": ["BaseTest.run_sub", "BaseTest.get_cpu", "TestMPU"],
+    "notes": ""
+  },
+  {
+    "qid": "CI-8",
+    "text": "How does the codebase detect file languages for syntax parsing?",
+    "category": "conceptual",
+    "expected_repo": "local-code-context",
+    "expected_paths": ["src/local_code_context/syntax/detection.py"],
+    "expected_symbols": ["detect_language", "LANGUAGE_BY_SUFFIX"],
+    "notes": ""
+  },
+  {
+    "qid": "CR-1",
+    "text": "What embedding model is configured for indexing across all repos?",
+    "category": "cross-repo",
+    "expected_repo": "local-code-context",
+    "expected_paths": [
+      "src/local_code_context/indexing/indexer.py",
+      "src/local_code_context/retrieval/query.py"
+    ],
+    "expected_symbols": ["DEFAULT_EMBED_MODEL"],
+    "notes": ""
+  },
+  {
+    "qid": "CR-2",
+    "text": "How is ACIA serial communication tested in the 6502 emulator?",
+    "category": "cross-repo",
+    "expected_repo": "compy6502",
+    "expected_paths": ["test/asm/unit/base.py"],
+    "expected_symbols": ["AciaDevice", "TestKernelAciaGetc", "TestKernelAciaPutc"],
+    "notes": ""
+  },
+  {
+    "qid": "CR-3",
+    "text": "How are Python files indexed compared to unsupported languages?",
+    "category": "cross-repo",
+    "expected_repo": "local-code-context",
+    "expected_paths": ["src/local_code_context/syntax/indexer.py"],
+    "expected_symbols": ["build_index_records", "build_text_fallback_records"],
+    "notes": ""
+  },
+  {
+    "qid": "CR-4",
+    "text": "What build tasks does the doit system orchestrate for compy6502?",
+    "category": "cross-repo",
+    "expected_repo": "compy6502",
+    "expected_paths": ["dodo.py"],
+    "expected_symbols": ["task_fpga", "task_asm", "compile_asm_source"],
+    "notes": ""
+  },
+  {
+    "qid": "FB-1",
+    "text": "What are the TinyFPGA BX pin assignments?",
+    "category": "fallback",
+    "expected_repo": "compy6502",
+    "expected_paths": ["src/fpga/tinyfpga.pins.pcf"],
+    "expected_symbols": [],
+    "notes": ".pcf file has no tree-sitter parser; falls back to text chunking"
+  },
+  {
+    "qid": "FB-2",
+    "text": "What constants define the 6502 kernel ABI include file?",
+    "category": "fallback",
+    "expected_repo": "compy6502",
+    "expected_paths": ["src/asm/include/compy6502.inc"],
+    "expected_symbols": [],
+    "notes": ".inc assembly include file has no tree-sitter parser; falls back to text chunking"
+  },
+  {
+    "qid": "FB-3",
+    "text": "What are the CPU vector addresses defined in the vectors file?",
+    "category": "fallback",
+    "expected_repo": "compy6502",
+    "expected_paths": ["src/asm/eeprom/kernel/vectors.s"],
+    "expected_symbols": [],
+    "notes": ".s assembly file has no tree-sitter parser; falls back to text chunking"
+  },
+  {
+    "qid": "NEG-1",
+    "text": "What database connection string is used for PostgreSQL?",
+    "category": "negative",
+    "expected_repo": null,
+    "expected_paths": [],
+    "expected_symbols": [],
+    "notes": "No PostgreSQL code exists in either repo"
+  },
+  {
+    "qid": "NEG-2",
+    "text": "How is the Kubernetes deployment configured?",
+    "category": "negative",
+    "expected_repo": null,
+    "expected_paths": [],
+    "expected_symbols": [],
+    "notes": "No Kubernetes configs exist in either repo"
+  }
+]
