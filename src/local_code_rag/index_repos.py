@@ -111,6 +111,13 @@ def manifest_path(db_path: Path) -> Path:
     return db_path / "manifest.json"
 
 
+def open_collection(db_path: Path, collection_name: str) -> Any:
+    import chromadb
+
+    client = chromadb.PersistentClient(path=str(db_path))
+    return client.get_or_create_collection(collection_name)
+
+
 def load_manifest(db_path: Path) -> dict[str, Any]:
     path = manifest_path(db_path)
     if not path.exists():
@@ -272,6 +279,81 @@ def delete_ids(collection: Any, ids: list[str]) -> None:
         collection.delete(ids=ids)
 
 
+def _payload_list(payload: dict[str, Any], key: str) -> list[Any]:
+    value = payload.get(key)
+    if value is None:
+        return []
+    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], list):
+        return list(value[0])
+    if isinstance(value, list):
+        return list(value)
+    return [value]
+
+
+def _snapshot_records(collection: Any, ids: list[str]) -> dict[str, list[Any]] | None:
+    if not ids:
+        return None
+
+    try:
+        payload = collection.get(
+            ids=ids, include=["documents", "embeddings", "metadatas"]
+        )
+    except Exception as exc:
+        print(f"failed to snapshot records for rollback: {exc}")
+        return None
+
+    snapshot = {
+        "ids": _payload_list(payload, "ids"),
+        "documents": _payload_list(payload, "documents"),
+        "embeddings": _payload_list(payload, "embeddings"),
+        "metadatas": _payload_list(payload, "metadatas"),
+    }
+    if not snapshot["ids"]:
+        return None
+    return snapshot
+
+
+def _restore_records(collection: Any, snapshot: dict[str, list[Any]]) -> None:
+    kwargs: dict[str, Any] = {
+        "ids": snapshot["ids"],
+        "documents": snapshot["documents"],
+        "metadatas": snapshot["metadatas"],
+    }
+    if any(embedding is not None for embedding in snapshot["embeddings"]):
+        kwargs["embeddings"] = snapshot["embeddings"]
+    collection.add(**kwargs)
+
+
+def _delete_path_records(
+    collection: Any, manifest: dict[str, Any], repo: str, rel_path: str
+) -> int:
+    key = file_key(repo, rel_path)
+    entry = manifest["files"].get(key)
+    ids = list(entry.get("ids", [])) if isinstance(entry, dict) else []
+
+    if not ids:
+        try:
+            payload = collection.get(where={"repo": repo, "path": rel_path})
+        except Exception as exc:
+            print(f"failed to discover records for deletion: {repo}:{rel_path} ({exc})")
+            return 0
+        ids = [str(item) for item in _payload_list(payload, "ids")]
+
+    try:
+        delete_ids(collection, ids)
+    except Exception as exc:
+        print(f"failed to delete records for {repo}:{rel_path}: {exc}")
+        return 0
+    manifest["files"].pop(key, None)
+    return len(ids)
+
+
+def delete_indexed_path(
+    collection: Any, manifest: dict[str, Any], repo: str, relative_path: str
+) -> int:
+    return _delete_path_records(collection, manifest, repo, relative_path)
+
+
 def index_file(
     collection: Any,
     path: Path,
@@ -294,16 +376,15 @@ def index_file(
     if not force and existing and existing.get("hash") == digest:
         return False
 
-    delete_ids(collection, existing.get("ids", []) if existing else [])
-
     chunks = chunk_text(text)
     if not chunks:
-        manifest["files"].pop(key, None)
+        _delete_path_records(collection, manifest, repo, rel_path)
         return True
 
     ids: list[str] = []
     documents: list[str] = []
     metadatas: list[dict[str, Any]] = []
+    embeddings: list[list[float]] = []
     for index, (start_line, end_line, chunk) in enumerate(chunks):
         chunk_id = hashlib.sha256(
             f"{repo}:{rel_path}:{digest}:{index}".encode("utf-8")
@@ -322,14 +403,37 @@ def index_file(
         )
 
     for start in range(0, len(documents), EMBED_BATCH_SIZE):
-        end = start + EMBED_BATCH_SIZE
-        embeddings = ollama_embed(documents[start:end], embed_model, ollama_url)
+        batch = documents[start : start + EMBED_BATCH_SIZE]
+        batch_embeddings = ollama_embed(batch, embed_model, ollama_url)
+        if len(batch_embeddings) != len(batch):
+            raise RuntimeError("embedding count did not match document count")
+        embeddings.extend(batch_embeddings)
+
+    existing_ids = list(existing.get("ids", [])) if isinstance(existing, dict) else []
+    backup = _snapshot_records(collection, existing_ids)
+
+    if existing_ids:
+        try:
+            delete_ids(collection, existing_ids)
+        except Exception as exc:
+            print(f"failed to delete previous records for {path}: {exc}")
+            return False
+
+    try:
         collection.add(
-            ids=ids[start:end],
-            documents=documents[start:end],
+            ids=ids,
+            documents=documents,
             embeddings=embeddings,
-            metadatas=metadatas[start:end],
+            metadatas=metadatas,
         )
+    except Exception as exc:
+        print(f"failed to index {path}: {exc}")
+        if backup is not None:
+            try:
+                _restore_records(collection, backup)
+            except Exception as restore_exc:
+                print(f"failed to restore previous records for {path}: {restore_exc}")
+        return False
 
     manifest["files"][key] = {
         "repo": repo,
@@ -351,9 +455,11 @@ def prune_deleted(
     for key, entry in list(manifest["files"].items()):
         if entry.get("repo") != repo or key in seen_keys:
             continue
-        delete_ids(collection, entry.get("ids", []))
-        manifest["files"].pop(key, None)
-        removed += 1
+        rel_path = entry.get("path")
+        if isinstance(rel_path, str) and _delete_path_records(
+            collection, manifest, repo, rel_path
+        ):
+            removed += 1
     return removed
 
 
