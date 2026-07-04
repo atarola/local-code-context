@@ -16,6 +16,14 @@ from local_code_context.mcp.context import (
 )
 from local_code_context.mcp.symbols import get_symbol
 from local_code_context.retrieval.hybrid import search_code_hybrid
+from local_code_context.storage.reader import (
+    get_definition,
+    get_file_vibe,
+    get_imports,
+    list_symbols,
+    trace_export,
+)
+from local_code_context.storage.resolver import get_resolved_imports, resolve_imports_for_repo
 from local_code_context.retrieval.query import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_COLLECTION,
@@ -222,6 +230,122 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
             language=language, limit=limit,
             include_lexical=include_lexical,
         )
+    if name == "get_definition":
+        symbol = arguments.get("symbol")
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ValueError("symbol is required")
+        repo = _argument(arguments, "repo", None)
+        path = _argument(arguments, "path", None)
+        kind = _argument(arguments, "kind", None)
+        limit = arguments.get("limit", 20)
+        results = get_definition(
+            config.db, name=symbol.strip(),
+            repo=repo.strip() if isinstance(repo, str) else None,
+            path=path.strip() if isinstance(path, str) else None,
+            kind=kind.strip() if isinstance(kind, str) else None,
+            limit=int(limit),
+        )
+        if not results:
+            return f"(no definitions found for symbol: {symbol})"
+        lines = []
+        for r in results:
+            vibe = get_file_vibe(config.db, r["repo"], r["path"])
+            line = (
+                f"{r['repo']}:{r['path']}:{r['start_line']}-{r['end_line']}"
+                f"  kind={r['kind']}"
+                f"  parent={r['parent']}" if r['parent'] else ""
+            )
+            if vibe:
+                line += f"  [{vibe}]"
+            lines.append(line)
+        return "\n".join(lines)
+    if name == "get_imports":
+        repo = _argument(arguments, "repo", None)
+        path = _argument(arguments, "path", None)
+        limit = arguments.get("limit", 100)
+        results = get_imports(
+            config.db,
+            repo=repo.strip() if isinstance(repo, str) else None,
+            path=path.strip() if isinstance(path, str) else None,
+            limit=int(limit),
+        )
+        if not results:
+            return "(no imports found)"
+        lines = []
+        for r in results:
+            lines.append(
+                f"{r['repo']}:{r['path']}:{r['start_line']}"
+                f"  {r['source_module']} -> {r['imported_name']}"
+            )
+        return "\n".join(lines)
+    if name == "trace_export":
+        name_arg = arguments.get("name")
+        if not isinstance(name_arg, str) or not name_arg.strip():
+            raise ValueError("name is required")
+        repo = _argument(arguments, "repo", None)
+        result = trace_export(
+            config.db, name=name_arg.strip(),
+            repo=repo.strip() if isinstance(repo, str) else None,
+        )
+        parts = []
+        if result.get("definition"):
+            parts.append("=== Definition ===")
+            for d in result["definition"]:
+                parts.append(f"  {d['repo']}:{d['path']}:{d['start_line']}  kind={d['kind']}")
+        if result.get("importers"):
+            parts.append("=== Imported by ===")
+            for i in result["importers"]:
+                parts.append(f"  {i['repo']}:{i['path']}")
+        if not parts:
+            return f"(no trace found for: {name_arg})"
+        return "\n".join(parts)
+    if name == "list_symbols":
+        repo = _argument(arguments, "repo", None)
+        kind = _argument(arguments, "kind", None)
+        path = _argument(arguments, "path", None)
+        limit = arguments.get("limit", 100)
+        results = list_symbols(
+            config.db,
+            repo=repo.strip() if isinstance(repo, str) else None,
+            kind=kind.strip() if isinstance(kind, str) else None,
+            path=path.strip() if isinstance(path, str) else None,
+            limit=int(limit),
+        )
+        if not results:
+            return "(no symbols found matching filters)"
+        lines = []
+        for r in results:
+            lines.append(
+                f"{r['repo']}:{r['path']}:{r['start_line']}-{r['end_line']}"
+                f"  {r['name']}  kind={r['kind']}"
+            )
+        return "\n".join(lines)
+    if name == "resolve_imports":
+        repo = arguments.get("repo")
+        if not isinstance(repo, str) or not repo.strip():
+            raise ValueError("repo is required")
+        rerun = bool(arguments.get("rerun", False))
+        if rerun:
+            run_result = resolve_imports_for_repo(config.db, repo.strip())
+        results = get_resolved_imports(
+            config.db,
+            repo=repo.strip(),
+            path=_argument(arguments, "path", None),
+            limit=int(arguments.get("limit", 100)),
+        )
+        if not results:
+            return f"(no resolved imports for repo: {repo})"
+        lines = []
+        if rerun:
+            lines.append(f"# re-resolution: {run_result['resolved']} resolved, {run_result['unresolved']} unresolved")
+            if run_result['errors']:
+                lines.append(f"# errors: {len(run_result['errors'])}")
+        for r in results:
+            lines.append(
+                f"{r['repo']}:{r['path']}:{r['source_module']} -> {r['imported_name']}"
+                f"  ==> {r['symbol_name']} ({r['symbol_kind']}) @ {r['symbol_path']}:{r['symbol_start_line']}"
+            )
+        return "\n".join(lines)
     raise ValueError(f"unknown tool: {name}")
 
 
@@ -436,6 +560,158 @@ def _tools() -> list[dict[str, Any]]:
                     },
                 },
                 "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "get_definition",
+            "description": (
+                "Retrieve definitions of a symbol by exact name. "
+                "Use repo, path, or kind to narrow. Returns file location, "
+                "kind, parent, and file vibe for each match."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "Required exact symbol name.",
+                    },
+                    "repo": {
+                        "type": "string",
+                        "description": "Optional repository filter.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional path filter.",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": "Optional symbol kind filter.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 200,
+                        "description": "Optional max results. Default: 20.",
+                    },
+                },
+                "required": ["symbol"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "get_imports",
+            "description": (
+                "List imports for a repo or file. Returns source module, "
+                "imported name, and file location for each import."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Optional repository filter.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional path filter.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "description": "Optional max results. Default: 100.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "trace_export",
+            "description": (
+                "Find where a symbol is defined and what files import it. "
+                "Returns both the definition location(s) and the list of "
+                "files that reference it via import."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Required exported name.",
+                    },
+                    "repo": {
+                        "type": "string",
+                        "description": "Optional repository filter.",
+                    },
+                },
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "list_symbols",
+            "description": (
+                "List all symbols matching filters. Optionally narrow by "
+                "repo, kind, or path. Returns name, kind, and location "
+                "for each symbol."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Optional repository filter.",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": "Optional symbol kind filter.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional path filter.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "description": "Optional max results. Default: 100.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "resolve_imports",
+            "description": (
+                "Show resolved import chains for a repo. Each import is "
+                "mapped to the symbol definition it references. Optionally "
+                "re-run resolution and filter by path."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Required repository name.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional path filter.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "description": "Optional max results. Default: 100.",
+                    },
+                    "rerun": {
+                        "type": "boolean",
+                        "description": "Re-run import resolution before returning results. Default: false.",
+                    },
+                },
+                "required": ["repo"],
                 "additionalProperties": False,
             },
         },

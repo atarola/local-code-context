@@ -7,6 +7,8 @@ LANGUAGE_BY_SUFFIX = {
     ".py": "python",
     ".pyi": "python",
     ".rs": "rust",
+    ".s": "assembly",
+    ".inc": "assembly",
 }
 
 

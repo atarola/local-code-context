@@ -57,6 +57,7 @@ class BuildResult:
     records: list[IndexRecord]
     language: str
     fallback_reason: str | None = None
+    extraction: ExtractionResult | None = None
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from local_code_context.storage.writer import index_file_xref
 from local_code_context.syntax.indexer import INDEX_SCHEMA_VERSION, build_index_records
 from local_code_context.syntax.rendering import CHUNK_LINES, CHUNK_OVERLAP, chunk_text
 
@@ -373,6 +374,14 @@ def index_file(
         text=text,
     )
     records = build_result.records
+
+    index_file_xref(
+        db_path=db_path,
+        repo=repo,
+        path=rel_path,
+        extraction=build_result.extraction,
+    )
+
     if not records:
         _delete_path_records(collection, manifest, repo, rel_path)
         return True

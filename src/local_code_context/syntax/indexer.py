@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from typing import Any
 
@@ -238,7 +239,10 @@ def _build_query_records(
         symbols=extraction.symbols,
         imports=extraction.imports,
     )
-    return BuildResult(records=records, language=language, fallback_reason=None)
+    return BuildResult(
+        records=records, language=language, fallback_reason=None,
+        extraction=extraction,
+    )
 
 
 def _compare_gaps_to_text(gaps: list[ComparisonGap]) -> None:
@@ -373,7 +377,10 @@ def _build_python_records(
             symbols=extraction.symbols,
             imports=extraction.imports,
         )
-        return BuildResult(records=records, language="python", fallback_reason=None)
+        return BuildResult(
+            records=records, language="python", fallback_reason=None,
+            extraction=extraction,
+        )
 
     query_extractor = _query_extractor_for_language("python")
     if query_extractor is None:
@@ -459,13 +466,109 @@ def _build_python_records(
 
     if mode == "compare":
         return BuildResult(
-            records=comparison.legacy_records, language="python", fallback_reason=None
+            records=comparison.legacy_records, language="python", fallback_reason=None,
+            extraction=comparison.legacy,
         )
 
     return BuildResult(
         records=comparison.query_records,
         language="python",
         fallback_reason=None,
+        extraction=comparison.query,
+    )
+
+
+_ASM_LABEL_RE = re.compile(r"^(\w+):\s*(?:;.*)?$", re.MULTILINE)
+_ASM_EQUATE_RE = re.compile(r"^\s*(\w+)\s*=\s*\S", re.MULTILINE)
+
+
+def _extract_assembly_symbols(text: str, relative_path: str) -> ExtractionResult:
+    symbols: list[CodeSymbol] = []
+    seen: set[str] = set()
+
+    for m in _ASM_LABEL_RE.finditer(text):
+        name = m.group(1)
+        if name not in seen:
+            seen.add(name)
+            start_line = text[: m.start()].count("\n") + 1
+            end_line = start_line
+            symbols.append(
+                CodeSymbol(
+                    name=name,
+                    kind="label",
+                    language="assembly",
+                    path=relative_path,
+                    start_line=start_line,
+                    end_line=end_line,
+                    start_byte=m.start(),
+                    end_byte=m.end(),
+                    signature=name,
+                    parent=None,
+                    exported=True,
+                )
+            )
+
+    for m in _ASM_EQUATE_RE.finditer(text):
+        name = m.group(1)
+        if name not in seen:
+            seen.add(name)
+            start_line = text[: m.start()].count("\n") + 1
+            end_line = start_line
+            symbols.append(
+                CodeSymbol(
+                    name=name,
+                    kind="constant",
+                    language="assembly",
+                    path=relative_path,
+                    start_line=start_line,
+                    end_line=end_line,
+                    start_byte=m.start(),
+                    end_byte=m.end(),
+                    signature=name,
+                    parent=None,
+                    exported=True,
+                )
+            )
+
+    return ExtractionResult(symbols=symbols, imports=[])
+
+
+def _build_assembly_records(
+    *,
+    repo: str,
+    repo_root: Any,
+    relative_path: str,
+    source: bytes,
+    text: str,
+    **kwargs: Any,
+) -> BuildResult:
+    extraction = _extract_assembly_symbols(text, relative_path)
+    if not extraction.symbols:
+        return BuildResult(
+            records=build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language="assembly",
+                reason="no asm labels found",
+            ),
+            language="assembly",
+            fallback_reason="no asm labels found",
+        )
+
+    records = build_structural_records(
+        repo=repo,
+        repo_root=repo_root,
+        relative_path=relative_path,
+        language="assembly",
+        source=source,
+        symbols=extraction.symbols,
+        imports=[],
+    )
+    return BuildResult(
+        records=records, language="assembly", fallback_reason=None,
+        extraction=extraction,
     )
 
 
@@ -484,6 +587,7 @@ def build_index_records(
     builders: dict[str, Any] = {
         "python": _build_python_records,
         "rust": _build_query_records,
+        "assembly": _build_assembly_records,
     }
     builder = builders.get(language or "")
     if builder is not None:
