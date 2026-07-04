@@ -1,47 +1,93 @@
-# Local multi-repo code context
+# local-code-context
 
-A minimal retrieval setup so a 12GB-VRAM local model can reason across
-multiple codebases without needing them all loaded into its context window
-at once. It embeds and retrieves relevant chunks first, then only sends
-those chunks to the model.
+A static-analysis MCP server for multi-repo code understanding. Uses tree-sitter
+to extract symbols and imports into a SQLite cross-reference database, then
+serves deterministic results over stdio — no embeddings, no vector search, no
+external services.
 
 ## How it works
 
-1. `local_code_context.index_repos` walks each repo you point it at, splits files into
-   roughly 60-line chunks, embeds each chunk with a small local embedding
-   model (`nomic-embed-text`), and stores them in a local Chroma DB tagged
-   with repo name, file path, and line range.
-2. `query.py` embeds your question, retrieves the most relevant chunks across
-   all indexed repos, and sends just those chunks, with citations, to your
-   coding model, for example `qwen2.5-coder:14b`.
+1. `code-context-index` walks each repo with tree-sitter, extracts symbols
+   (functions, classes, constants) and imports, and writes them to
+   `xref.sqlite` alongside a content-hash manifest for incremental re-indexing.
+2. `code-context-mcp` reads the xref database and exposes an MCP server over
+   stdio with tools for symbol lookup, import chains, export tracing, and
+   repository context assembly.
 
-This keeps VRAM usage low: the embedding model is small, and the chat model
-only sees a few thousand tokens of retrieved context instead of whole repos.
+No embedding model, no vector database, no daemon. The only dependency is
+SQLite, which Python includes in its standard library.
 
-## Setup
+## Quick start
 
 ```bash
-ollama pull nomic-embed-text
-ollama pull qwen2.5-coder:14b
+# Index a repo
+uv run python -m local_code_context.indexing.indexer --repo /path/to/repo --db ./codebase_index
 
-uv sync
+# Start the MCP server
+uv run python -m local_code_context.mcp.server --db ./codebase_index
 ```
+
+## MCP tools
+
+| Tool | What it returns |
+|---|---|
+| `list_repositories` | All indexed repository names |
+| `get_repository_context(repo, max_chars?)` | File tree, README, manifests, modules, tests, excerpts |
+| `get_workspace_context(repos?, max_chars_per_repo?)` | Compact context for multiple repos |
+| `get_definition(symbol, repo?, path?, kind?, limit?)` | Symbol definitions with file location and file vibe |
+| `get_imports(repo?, path?, limit?)` | Import graph entries |
+| `trace_export(name, repo?)` | Definition + all files that import it |
+| `list_symbols(repo?, kind?, path?, limit?)` | All symbols matching filters |
+| `resolve_imports(repo, path?, rerun?)` | Resolved import chains (import → symbol) |
+
+The server starts instantly — no model loading, no network calls.
+
+## Indexing
+
+```bash
+uv run python -m local_code_context.indexing.indexer \
+  --repo /path/to/service-a \
+  --repo /path/to/service-b \
+  --db ./codebase_index
+```
+
+Or index all Git repos under a workspace directory:
+
+```bash
+uv run python -m local_code_context.indexing.indexer \
+  --workspace /path/to/code \
+  --db ./codebase_index
+```
+
+Re-run any time to refresh. A `manifest.json` inside `--db` tracks content
+hashes per file; unchanged files are skipped. `xref.sqlite` is updated
+incrementally.
+
+The indexer skips `.git`, `.venv`, `node_modules`, `build`, `target`, and
+common cache directories. Files matched by `.gitignore` are excluded in Git
+repositories. Add a `.index_ignore` file to a repo for additional ignore
+patterns.
+
+## Watcher
+
+```bash
+uv run python -m local_code_context.indexing.watcher \
+  --workspace /path/to/code \
+  --db ./codebase_index
+```
+
+Auto-reindexes files on save. The watcher runs an initial full index on start,
+then watches for filesystem changes.
 
 ## Nix
 
-Run commands directly from the flake:
-
 ```bash
 nix run .#index -- --workspace /path/to/code --db ./codebase_index
-nix run .#query -- --db ./codebase_index --q "Where is retry handled?"
-nix run .#watch -- --workspace /path/to/code --db ./codebase_index
 nix run .#mcp -- --db ./codebase_index
+nix run .#watch -- --workspace /path/to/code --db ./codebase_index
 ```
 
-Install from another flake by adding this repo as an input and using
-`inputs.local-code-context.packages.${system}.default`.
-
-The flake also exports a Home Manager module:
+### Home Manager module
 
 ```nix
 {
@@ -50,178 +96,38 @@ The flake also exports a Home Manager module:
     inputs.nixpkgs.follows = "nixpkgs";
   };
 }
-```
 
-Pass `inputs` to Home Manager and import the module from `home.nix`:
-
-```nix
-{ inputs, ... }:
-
+# In home.nix:
 {
-  imports = [
-    inputs.local-code-context.homeManagerModules.default
-  ];
+  imports = [ inputs.local-code-context.homeManagerModules.default ];
 
   services.local-code-context = {
     enable = true;
-    workspaces = [
-      "/home/your-user/code"
-    ];
+    workspaces = [ "/home/your-user/code" ];
     db = "/home/your-user/.local/share/local-code-context/codebase_index";
-    ollamaUrl = "http://127.0.0.1:11434";
-
-    # Keep this false if you only want the watcher running when you start it.
     autoStart = false;
-
-    # Default: install the Ollama CLI, but use an existing system Ollama service.
-    installOllama = true;
-    ollamaServiceScope = "system";
-    manageOllama = false;
   };
 }
 ```
 
-With `autoStart = false`, start it manually as a user service:
+Start and stop the watcher with:
 
 ```bash
-systemctl --user start local-code-context-watch
-systemctl --user status local-code-context-watch
-systemctl --user stop local-code-context-watch
-```
-
-The Home Manager module also adds shell aliases by default:
-
-```bash
-ollama-up
-ollama-status
-ollama-down
 code-context-up
 code-context-status
 code-context-down
 code-context-logs
 ```
 
-The `code-context-*` aliases manage the watcher, and `ollama-*` aliases only
-manage Ollama.
+## Schema
 
-The MCP server is separate from the watcher. It reads the same Chroma DB and
-serves retrieval over stdio so Claude Code or another MCP client can ask for
-repo context before reasoning with an Ollama-backed model. Start it with:
+`xref.sqlite` tables:
 
-```bash
-code-context-mcp --db ./codebase_index
-```
-
-or via Nix:
-
-```bash
-nix run .#mcp -- --db ./codebase_index
-```
-
-By default, the module installs the `ollama` CLI but assumes the Ollama daemon
-is configured elsewhere, for example with NixOS `services.ollama`. Set
-`ollamaServiceScope = "user";` and `manageOllama = true;` only if you want this
-Home Manager module to create a user service running `ollama serve`.
-
-Set `services.local-code-context.shellAliases = false;` to skip them.
-
-If you are running in a Nix shell and Chroma/NumPy fails to import with missing
-shared libraries such as `libstdc++.so.6` or `libz.so.1`, enter the provided
-shell first:
-
-```bash
-nix-shell
-uv sync
-```
-
-## Usage
-
-Index a workspace. Each immediate child directory containing `.git` is indexed
-as a separate repo:
-
-```bash
-uv run code-context-index --workspace /path/to/code --db ./codebase_index
-```
-
-Or index explicit repos. Repeat `--repo` for as many repos as you want in the
-same DB:
-
-```bash
-uv run code-context-index --repo /path/to/service-a --repo /path/to/service-b --db ./codebase_index
-```
-
-Re-run against a repo any time to refresh it after code changes. Indexing is
-incremental: `manifest.json` inside the `--db` directory tracks a content hash
-per file, so unchanged files are skipped entirely on re-runs. Only new, edited,
-and deleted files are reflected in Chroma.
-
-The indexer also skips common cache and build directories by default, including
-`.git`, `.venv`, `.uv-cache`, `.cache`, `node_modules`, `build`, `dist`,
-`.gitignore`, `.index_ignore`, package metadata directories ending in
-`.egg-info`, and files or directories matched by a repo-local `.index_ignore`
-file.
-For git repositories, files ignored by `.gitignore` are excluded automatically.
-
-Use `--force` to ignore the manifest and re-embed everything, for example after
-changing `CHUNK_LINES` or `CHUNK_OVERLAP` in `src/local_code_context/index_repos.py`.
-
-Ask a question that spans repos:
-
-```bash
-uv run code-context-query \
-  --db ./codebase_index \
-  --q "Where does service-a's retry logic call into service-b's client, and could that cause the duplicate-write bug we're seeing?"
-```
-
-Restrict to one repo for a single-codebase review:
-
-```bash
-uv run code-context-query --db ./codebase_index --repo service-a --q "Review the error handling in the payment module"
-```
-
-Only inspect retrieval hits without calling the chat model:
-
-```bash
-uv run code-context-query --db ./codebase_index --q "Where is retry handled?" --no-answer
-```
-
-Print retrieved chunks before the model answer:
-
-```bash
-uv run code-context-query --db ./codebase_index --q "Where is retry handled?" --show-context
-```
-
-## Tuning notes
-
-- `CHUNK_LINES` and `CHUNK_OVERLAP` in `src/local_code_context/index_repos.py`: 60 and 10 are
-  reasonable defaults for most languages. Drop to about 30 lines for dense code
-  and raise for verbose config-heavy files.
-- `--top-k` in `query.py`: more chunks means more cross-file context but also a
-  larger prompt. Start at 10; raise to 15-20 for genuinely cross-repo questions.
-- Set `num_ctx` on your Ollama chat model so it does not truncate retrieved
-  context:
-
-```text
-ollama run qwen2.5-coder:14b
-/set parameter num_ctx 16384
-/save qwen2.5-coder-16k
-```
-
-Then query with:
-
-```bash
-uv run code-context-query --model qwen2.5-coder-16k --db ./codebase_index --q "..."
-```
-
-## Privacy
-
-The Chroma DB contains source chunks and metadata from whatever repos you
-index. Treat it like source code: do not commit `codebase_index/`, `.chroma/`,
-or any custom DB directory that contains an index of private code.
-
-By default, embeddings and chat requests go to a local Ollama endpoint at
-`http://localhost:11434`. The tool does not call a hosted model API unless you
-explicitly point `--ollama-url` at one.
-
-The MCP server does not start Ollama. It expects the daemon to already be
-running, either under this module, NixOS, or a separate local service.
+| Table | Contents |
+|---|---|
+| `symbols` | Name, kind, language, path, repo, line range, parent, signature |
+| `imports` | Source module, imported name, path, repo, start line |
+| `file_vibe` | Per-file summary derived from first 5 symbol signatures |
+| `repo_meta` | Name, root path, last indexed |
+| `resolved_imports` | Maps `import_id` → `symbol_id` (post-indexing resolution) |
+| `call_sites` | Caller/callee name, path, line (schema only) |

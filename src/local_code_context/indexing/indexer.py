@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from local_code_context.storage.schema import ensure_schema, get_db_path, open_db
 from local_code_context.storage.writer import index_file_xref
 from local_code_context.syntax.indexer import build_index_records
 
@@ -317,6 +318,22 @@ def run_index(
         )
 
     save_manifest(db_path, manifest)
+
+    xref_db = get_db_path(db_path)
+    xref_db.parent.mkdir(parents=True, exist_ok=True)
+    conn = open_db(xref_db)
+    try:
+        ensure_schema(conn)
+        for repo_root in repo_paths:
+            repo = repo_name(repo_root)
+            conn.execute(
+                "INSERT OR REPLACE INTO repo_meta (repo, root_path, last_indexed) VALUES (?, ?, ?)",
+                (repo, str(repo_root), ""),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
     print(
         f"done: indexed/updated {total_changed}, skipped {total_skipped}"
     )
