@@ -1,19 +1,29 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Any
 
-from local_code_context.storage.schema import ensure_schema, get_db_path, open_db
+from sqlalchemy import select
+from sqlalchemy.orm import Session, aliased, sessionmaker
+
+from local_code_context.db.engine import create_engine_for_db
+from local_code_context.db.models import CallSite, FileVibe, ImportRecord, ResolvedImport, Symbol
+from local_code_context.db.schema import ensure_orm_schema
+from local_code_context.storage.schema import get_db_path
 
 
-def _connect(db_path: Path) -> sqlite3.Connection | None:
-    xref_db = get_db_path(db_path)
+def _orm_to_dict(obj: Any) -> dict[str, Any]:
+    return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+
+
+def _reader_session(db_dir: Path) -> Session | None:
+    xref_db = get_db_path(db_dir)
     if not xref_db.exists():
         return None
-    conn = open_db(xref_db)
-    ensure_schema(conn)
-    return conn
+    engine = create_engine_for_db(db_dir)
+    ensure_orm_schema(engine)
+    Factory = sessionmaker(bind=engine)
+    return Factory()
 
 
 def get_definition(
@@ -24,31 +34,24 @@ def get_definition(
     kind: str | None = None,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    conn = _connect(db_path)
-    if conn is None:
+    session = _reader_session(db_path)
+    if session is None:
         return []
 
     try:
-        conditions = ["name = ?"]
-        params: list[Any] = [name]
+        stmt = select(Symbol).where(Symbol.name == name)
         if repo:
-            conditions.append("repo = ?")
-            params.append(repo)
+            stmt = stmt.where(Symbol.repo == repo)
         if path:
-            conditions.append("path = ?")
-            params.append(path)
+            stmt = stmt.where(Symbol.path == path)
         if kind:
-            conditions.append("kind = ?")
-            params.append(kind)
+            stmt = stmt.where(Symbol.kind == kind)
 
-        where = " AND ".join(conditions)
-        rows = conn.execute(
-            f"SELECT * FROM symbols WHERE {where} ORDER BY repo, path, start_line LIMIT ?",
-            (*params, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
+        stmt = stmt.order_by(Symbol.repo, Symbol.path, Symbol.start_line).limit(limit)
+        rows = session.execute(stmt).scalars().all()
+        return [_orm_to_dict(r) for r in rows]
     finally:
-        conn.close()
+        session.close()
 
 
 def get_imports(
@@ -57,28 +60,22 @@ def get_imports(
     path: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    conn = _connect(db_path)
-    if conn is None:
+    session = _reader_session(db_path)
+    if session is None:
         return []
 
     try:
-        conditions: list[str] = []
-        params: list[Any] = []
+        stmt = select(ImportRecord)
         if repo:
-            conditions.append("repo = ?")
-            params.append(repo)
+            stmt = stmt.where(ImportRecord.repo == repo)
         if path:
-            conditions.append("path = ?")
-            params.append(path)
+            stmt = stmt.where(ImportRecord.path == path)
 
-        where = " AND ".join(conditions) if conditions else "1"
-        rows = conn.execute(
-            f"SELECT * FROM imports WHERE {where} ORDER BY repo, path, start_line LIMIT ?",
-            (*params, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
+        stmt = stmt.order_by(ImportRecord.repo, ImportRecord.path, ImportRecord.start_line).limit(limit)
+        rows = session.execute(stmt).scalars().all()
+        return [_orm_to_dict(r) for r in rows]
     finally:
-        conn.close()
+        session.close()
 
 
 def trace_export(
@@ -87,41 +84,29 @@ def trace_export(
     repo: str | None = None,
     limit: int = 50,
 ) -> dict[str, Any]:
-    conn = _connect(db_path)
-    if conn is None:
+    session = _reader_session(db_path)
+    if session is None:
         return {"definition": None, "importers": []}
 
     try:
-        conditions = ["name = ?"]
-        params: list[Any] = [name]
+        stmt = select(Symbol).where(Symbol.name == name)
         if repo:
-            conditions.append("repo = ?")
-            params.append(repo)
+            stmt = stmt.where(Symbol.repo == repo)
+        stmt = stmt.order_by(Symbol.repo, Symbol.path, Symbol.start_line).limit(10)
+        definitions = session.execute(stmt).scalars().all()
 
-        where = " AND ".join(conditions)
-        definitions = conn.execute(
-            f"SELECT * FROM symbols WHERE {where} ORDER BY repo, path, start_line LIMIT 10",
-            params,
-        ).fetchall()
-
-        importer_conditions = ["imported_name = ?"]
-        importer_params: list[Any] = [name]
+        imp_stmt = select(ImportRecord).where(ImportRecord.imported_name == name)
         if repo:
-            importer_conditions.append("repo = ?")
-            importer_params.append(repo)
-
-        importer_where = " AND ".join(importer_conditions)
-        importers = conn.execute(
-            f"SELECT DISTINCT repo, path FROM imports WHERE {importer_where} ORDER BY repo, path LIMIT ?",
-            (*importer_params, limit),
-        ).fetchall()
+            imp_stmt = imp_stmt.where(ImportRecord.repo == repo)
+        imp_stmt = imp_stmt.order_by(ImportRecord.repo, ImportRecord.path).limit(limit)
+        importers = session.execute(imp_stmt).scalars().all()
 
         return {
-            "definition": [dict(row) for row in definitions],
-            "importers": [dict(row) for row in importers],
+            "definition": [_orm_to_dict(d) for d in definitions],
+            "importers": [_orm_to_dict(i) for i in importers],
         }
     finally:
-        conn.close()
+        session.close()
 
 
 def list_symbols(
@@ -131,31 +116,24 @@ def list_symbols(
     path: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    conn = _connect(db_path)
-    if conn is None:
+    session = _reader_session(db_path)
+    if session is None:
         return []
 
     try:
-        conditions: list[str] = []
-        params: list[Any] = []
+        stmt = select(Symbol)
         if repo:
-            conditions.append("repo = ?")
-            params.append(repo)
+            stmt = stmt.where(Symbol.repo == repo)
         if kind:
-            conditions.append("kind = ?")
-            params.append(kind)
+            stmt = stmt.where(Symbol.kind == kind)
         if path:
-            conditions.append("path = ?")
-            params.append(path)
+            stmt = stmt.where(Symbol.path == path)
 
-        where = " AND ".join(conditions) if conditions else "1"
-        rows = conn.execute(
-            f"SELECT * FROM symbols WHERE {where} ORDER BY repo, path, start_line LIMIT ?",
-            (*params, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
+        stmt = stmt.order_by(Symbol.repo, Symbol.path, Symbol.start_line).limit(limit)
+        rows = session.execute(stmt).scalars().all()
+        return [_orm_to_dict(r) for r in rows]
     finally:
-        conn.close()
+        session.close()
 
 
 def trace_callers(
@@ -164,33 +142,48 @@ def trace_callers(
     repo: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    conn = _connect(db_path)
-    if conn is None:
+    session = _reader_session(db_path)
+    if session is None:
         return []
 
     try:
-        conditions = ["cs.callee_name = ?"]
-        params: list[Any] = [callee_name]
-        if repo:
-            conditions.append("cs.repo = ?")
-            params.append(repo)
+        CallerSym = aliased(Symbol, name="caller_sym")
+        ResolvedSym = aliased(Symbol, name="resolved_sym")
 
-        where = " AND ".join(conditions)
-        rows = conn.execute(
-            f"""SELECT cs.*, s.name AS caller_sym_name, s.kind AS caller_sym_kind,
-                       rs.name AS resolved_sym_name, rs.kind AS resolved_sym_kind,
-                       rs.path AS resolved_sym_path
-                FROM call_sites cs
-                LEFT JOIN symbols s ON cs.caller_symbol_id = s.id
-                LEFT JOIN symbols rs ON cs.resolved_symbol_id = rs.id
-                WHERE {where}
-                ORDER BY cs.repo, cs.path, cs.start_line
-                LIMIT ?""",
-            (*params, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
+        stmt = select(
+            CallSite,
+            CallerSym.name.label("caller_sym_name"),
+            CallerSym.kind.label("caller_sym_kind"),
+            ResolvedSym.name.label("resolved_sym_name"),
+            ResolvedSym.kind.label("resolved_sym_kind"),
+            ResolvedSym.path.label("resolved_sym_path"),
+        ).outerjoin(
+            CallerSym, CallSite.caller_symbol_id == CallerSym.id
+        ).outerjoin(
+            ResolvedSym, CallSite.resolved_symbol_id == ResolvedSym.id
+        ).where(
+            CallSite.callee_name == callee_name
+        )
+
+        if repo:
+            stmt = stmt.where(CallSite.repo == repo)
+
+        stmt = stmt.order_by(CallSite.repo, CallSite.path, CallSite.start_line).limit(limit)
+
+        rows = session.execute(stmt).all()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            cs: CallSite = row[0]
+            d = _orm_to_dict(cs)
+            d["caller_sym_name"] = row.caller_sym_name
+            d["caller_sym_kind"] = row.caller_sym_kind
+            d["resolved_sym_name"] = row.resolved_sym_name
+            d["resolved_sym_kind"] = row.resolved_sym_kind
+            d["resolved_sym_path"] = row.resolved_sym_path
+            result.append(d)
+        return result
     finally:
-        conn.close()
+        session.close()
 
 
 def find_callers(
@@ -199,23 +192,37 @@ def find_callers(
     *,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    conn = _connect(db_path)
-    if conn is None:
+    session = _reader_session(db_path)
+    if session is None:
         return []
 
     try:
-        rows = conn.execute(
-            """SELECT cs.*, cs2.name AS caller_sym_name, cs2.kind AS caller_sym_kind
-               FROM call_sites cs
-               LEFT JOIN symbols cs2 ON cs.caller_symbol_id = cs2.id
-               WHERE cs.resolved_symbol_id = ?
-               ORDER BY cs.repo, cs.path, cs.start_line, cs.start_column, cs.callee_name
-               LIMIT ?""",
-            (symbol_id, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
+        CallerSym = aliased(Symbol, name="caller_sym")
+
+        stmt = select(
+            CallSite,
+            CallerSym.name.label("caller_sym_name"),
+            CallerSym.kind.label("caller_sym_kind"),
+        ).outerjoin(
+            CallerSym, CallSite.caller_symbol_id == CallerSym.id
+        ).where(
+            CallSite.resolved_symbol_id == symbol_id
+        ).order_by(
+            CallSite.repo, CallSite.path, CallSite.start_line,
+            CallSite.start_column, CallSite.callee_name,
+        ).limit(limit)
+
+        rows = session.execute(stmt).all()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            cs: CallSite = row[0]
+            d = _orm_to_dict(cs)
+            d["caller_sym_name"] = row.caller_sym_name
+            d["caller_sym_kind"] = row.caller_sym_kind
+            result.append(d)
+        return result
     finally:
-        conn.close()
+        session.close()
 
 
 def find_callees(
@@ -225,30 +232,44 @@ def find_callees(
     include_unresolved: bool = True,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    conn = _connect(db_path)
-    if conn is None:
+    session = _reader_session(db_path)
+    if session is None:
         return []
 
     try:
-        conditions = ["cs.caller_symbol_id = ?"]
-        params: list[Any] = [caller_symbol_id]
-        if not include_unresolved:
-            conditions.append("cs.resolved_symbol_id IS NOT NULL")
+        ResolvedSym = aliased(Symbol, name="resolved_sym")
 
-        where = " AND ".join(conditions)
-        rows = conn.execute(
-            f"""SELECT cs.*, rs.name AS resolved_sym_name, rs.kind AS resolved_sym_kind,
-                       rs.path AS resolved_sym_path
-                FROM call_sites cs
-                LEFT JOIN symbols rs ON cs.resolved_symbol_id = rs.id
-                WHERE {where}
-                ORDER BY cs.repo, cs.path, cs.start_line, cs.start_column, cs.callee_name
-                LIMIT ?""",
-            (*params, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
+        stmt = select(
+            CallSite,
+            ResolvedSym.name.label("resolved_sym_name"),
+            ResolvedSym.kind.label("resolved_sym_kind"),
+            ResolvedSym.path.label("resolved_sym_path"),
+        ).outerjoin(
+            ResolvedSym, CallSite.resolved_symbol_id == ResolvedSym.id
+        ).where(
+            CallSite.caller_symbol_id == caller_symbol_id
+        )
+
+        if not include_unresolved:
+            stmt = stmt.where(CallSite.resolved_symbol_id.isnot(None))
+
+        stmt = stmt.order_by(
+            CallSite.repo, CallSite.path, CallSite.start_line,
+            CallSite.start_column, CallSite.callee_name,
+        ).limit(limit)
+
+        rows = session.execute(stmt).all()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            cs: CallSite = row[0]
+            d = _orm_to_dict(cs)
+            d["resolved_sym_name"] = row.resolved_sym_name
+            d["resolved_sym_kind"] = row.resolved_sym_kind
+            d["resolved_sym_path"] = row.resolved_sym_path
+            result.append(d)
+        return result
     finally:
-        conn.close()
+        session.close()
 
 
 def find_calls_by_name(
@@ -259,33 +280,52 @@ def find_calls_by_name(
     path: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    conn = _connect(db_path)
-    if conn is None:
+    session = _reader_session(db_path)
+    if session is None:
         return []
 
     try:
-        conditions = ["cs.repo = ?", "cs.callee_name = ?"]
-        params: list[Any] = [repo, callee_name]
-        if path:
-            conditions.append("cs.path = ?")
-            params.append(path)
+        CallerSym = aliased(Symbol, name="caller_sym")
+        ResolvedSym = aliased(Symbol, name="resolved_sym")
 
-        where = " AND ".join(conditions)
-        rows = conn.execute(
-            f"""SELECT cs.*, s.name AS caller_sym_name, s.kind AS caller_sym_kind,
-                       rs.name AS resolved_sym_name, rs.kind AS resolved_sym_kind,
-                       rs.path AS resolved_sym_path
-                FROM call_sites cs
-                LEFT JOIN symbols s ON cs.caller_symbol_id = s.id
-                LEFT JOIN symbols rs ON cs.resolved_symbol_id = rs.id
-                WHERE {where}
-                ORDER BY cs.repo, cs.path, cs.start_line, cs.start_column, cs.callee_name
-                LIMIT ?""",
-            (*params, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
+        stmt = select(
+            CallSite,
+            CallerSym.name.label("caller_sym_name"),
+            CallerSym.kind.label("caller_sym_kind"),
+            ResolvedSym.name.label("resolved_sym_name"),
+            ResolvedSym.kind.label("resolved_sym_kind"),
+            ResolvedSym.path.label("resolved_sym_path"),
+        ).outerjoin(
+            CallerSym, CallSite.caller_symbol_id == CallerSym.id
+        ).outerjoin(
+            ResolvedSym, CallSite.resolved_symbol_id == ResolvedSym.id
+        ).where(
+            CallSite.repo == repo,
+            CallSite.callee_name == callee_name,
+        )
+
+        if path:
+            stmt = stmt.where(CallSite.path == path)
+
+        stmt = stmt.order_by(
+            CallSite.repo, CallSite.path, CallSite.start_line,
+            CallSite.start_column, CallSite.callee_name,
+        ).limit(limit)
+
+        rows = session.execute(stmt).all()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            cs: CallSite = row[0]
+            d = _orm_to_dict(cs)
+            d["caller_sym_name"] = row.caller_sym_name
+            d["caller_sym_kind"] = row.caller_sym_kind
+            d["resolved_sym_name"] = row.resolved_sym_name
+            d["resolved_sym_kind"] = row.resolved_sym_kind
+            d["resolved_sym_path"] = row.resolved_sym_path
+            result.append(d)
+        return result
     finally:
-        conn.close()
+        session.close()
 
 
 def get_file_vibe(
@@ -293,15 +333,13 @@ def get_file_vibe(
     repo: str,
     path: str,
 ) -> str | None:
-    conn = _connect(db_path)
-    if conn is None:
+    session = _reader_session(db_path)
+    if session is None:
         return None
 
     try:
-        row = conn.execute(
-            "SELECT summary FROM file_vibe WHERE repo = ? AND path = ?",
-            (repo, path),
-        ).fetchone()
-        return row["summary"] if row else None
+        stmt = select(FileVibe).where(FileVibe.repo == repo, FileVibe.path == path)
+        row = session.execute(stmt).scalar_one_or_none()
+        return row.summary if row else None
     finally:
-        conn.close()
+        session.close()

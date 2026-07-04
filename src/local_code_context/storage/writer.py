@@ -1,25 +1,16 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Any
 
-from local_code_context.storage.schema import ensure_schema, get_db_path, open_db
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session, sessionmaker
+
+from local_code_context.db.engine import create_engine_for_db
+from local_code_context.db.models import CallSite, FileVibe, ImportRecord, ResolvedImport, Symbol
+from local_code_context.db.schema import ensure_orm_schema
+from local_code_context.storage.schema import get_db_path
 from local_code_context.syntax.models import CodeCall, CodeImport, CodeSymbol
-
-
-def _lookup_symbol_id(conn: sqlite3.Connection, repo: str, path: str, symbol_key: str) -> int | None:
-    try:
-        kind, name, parent, start_line_str = symbol_key.split(":", 3)
-        start_line = int(start_line_str)
-    except (ValueError, TypeError):
-        return None
-    row = conn.execute(
-        """SELECT id FROM symbols
-           WHERE repo = ? AND path = ? AND name = ? AND kind = ? AND parent = ? AND start_line = ?""",
-        (repo, path, name, kind, parent, start_line),
-    ).fetchone()
-    return row["id"] if row else None
 
 
 def _language_for_path(path: str) -> str:
@@ -36,78 +27,6 @@ def _language_for_path(path: str) -> str:
     return lang_map.get(suffix, "")
 
 
-def _upsert_symbol(conn: sqlite3.Connection, symbol: CodeSymbol, repo: str) -> int | None:
-    conn.execute(
-        """INSERT OR IGNORE INTO symbols
-           (repo, path, name, kind, language, start_line, end_line, parent, exported, signature)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            repo,
-            symbol.path,
-            symbol.name,
-            symbol.kind,
-            symbol.language,
-            symbol.start_line,
-            symbol.end_line,
-            symbol.parent or "",
-            1 if symbol.exported else 0,
-            symbol.signature or "",
-        ),
-    )
-    row = conn.execute(
-        """SELECT id FROM symbols
-           WHERE repo = ? AND path = ? AND name = ? AND kind = ? AND parent = ? AND start_line = ?""",
-        (repo, symbol.path, symbol.name, symbol.kind, symbol.parent or "", symbol.start_line),
-    ).fetchone()
-    return row["id"] if row else None
-
-
-def _upsert_import(conn: sqlite3.Connection, imp: CodeImport, repo: str) -> None:
-    names = imp.imported_names if imp.imported_names else (imp.source,)
-    for name in names:
-        conn.execute(
-            """INSERT INTO imports
-               (repo, path, source_module, imported_name, start_line)
-               VALUES (?, ?, ?, ?, ?)""",
-            (repo, imp.path, imp.source, name, imp.start_line),
-        )
-
-
-def _upsert_call_site(
-    conn: sqlite3.Connection,
-    call: CodeCall,
-    repo: str,
-    language: str,
-    caller_symbol_id: int | None,
-) -> None:
-    conn.execute(
-        """INSERT INTO call_sites
-           (repo, path, language, caller_symbol_id, callee_name, callee_qualifier,
-            start_line, start_column, end_line, end_column)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            repo,
-            call.path,
-            language,
-            caller_symbol_id,
-            call.callee_name,
-            call.callee_qualifier,
-            call.start_line,
-            call.start_column,
-            call.end_line,
-            call.end_column,
-        ),
-    )
-
-
-def _upsert_file_vibe(conn: sqlite3.Connection, repo: str, path: str, summary: str) -> None:
-    conn.execute(
-        """INSERT OR REPLACE INTO file_vibe
-           (repo, path, summary) VALUES (?, ?, ?)""",
-        (repo, path, summary),
-    )
-
-
 def _extract_vibe(symbols: list[CodeSymbol]) -> str:
     parts: list[str] = []
     for sym in symbols[:5]:
@@ -116,19 +35,45 @@ def _extract_vibe(symbols: list[CodeSymbol]) -> str:
     return "; ".join(parts) if parts else ""
 
 
+def _sym_to_orm(sym: CodeSymbol, repo: str) -> Symbol:
+    return Symbol(
+        repo=repo,
+        path=sym.path,
+        name=sym.name,
+        kind=sym.kind,
+        language=sym.language,
+        start_line=sym.start_line,
+        end_line=sym.end_line,
+        parent=sym.parent or "",
+        exported=1 if sym.exported else 0,
+        signature=sym.signature or "",
+    )
+
+
+def _symbol_key(sym: CodeSymbol) -> str:
+    key = sym.parent or ""
+    return f"{sym.kind}:{sym.name}:{key}:{sym.start_line}"
+
+
 def delete_file_xref(db_path: Path, repo: str, path: str) -> None:
-    xref_db = get_db_path(db_path)
-    xref_db.parent.mkdir(parents=True, exist_ok=True)
-    conn = open_db(xref_db)
-    try:
-        conn.execute("DELETE FROM symbols WHERE repo = ? AND path = ?", (repo, path))
-        conn.execute("DELETE FROM resolved_imports WHERE import_id IN (SELECT id FROM imports WHERE repo = ? AND path = ?)", (repo, path))
-        conn.execute("DELETE FROM imports WHERE repo = ? AND path = ?", (repo, path))
-        conn.execute("DELETE FROM call_sites WHERE repo = ? AND path = ?", (repo, path))
-        conn.execute("DELETE FROM file_vibe WHERE repo = ? AND path = ?", (repo, path))
-        conn.commit()
-    finally:
-        conn.close()
+    engine = create_engine_for_db(db_path)
+    ensure_orm_schema(engine)
+    Factory = sessionmaker(bind=engine)
+
+    with Factory() as session, session.begin():
+        session.execute(delete(CallSite).where(CallSite.repo == repo, CallSite.path == path))
+        session.execute(
+            delete(ResolvedImport).where(
+                ResolvedImport.import_id.in_(
+                    select(ImportRecord.id).where(
+                        ImportRecord.repo == repo, ImportRecord.path == path
+                    )
+                )
+            )
+        )
+        session.execute(delete(ImportRecord).where(ImportRecord.repo == repo, ImportRecord.path == path))
+        session.execute(delete(Symbol).where(Symbol.repo == repo, Symbol.path == path))
+        session.execute(delete(FileVibe).where(FileVibe.repo == repo, FileVibe.path == path))
 
 
 def index_file_xref(
@@ -152,43 +97,87 @@ def index_file_xref(
     if not syms and not clls:
         return
 
-    xref_db = get_db_path(db_path)
-    xref_db.parent.mkdir(parents=True, exist_ok=True)
-    conn = open_db(xref_db)
-    try:
-        ensure_schema(conn)
+    engine = create_engine_for_db(db_path)
+    ensure_orm_schema(engine)
+    Factory = sessionmaker(bind=engine)
 
-        conn.execute("DELETE FROM symbols WHERE repo = ? AND path = ?", (repo, path))
-        conn.execute("DELETE FROM resolved_imports WHERE import_id IN (SELECT id FROM imports WHERE repo = ? AND path = ?)", (repo, path))
-        conn.execute("DELETE FROM imports WHERE repo = ? AND path = ?", (repo, path))
-        conn.execute("DELETE FROM call_sites WHERE repo = ? AND path = ?", (repo, path))
-        conn.execute("DELETE FROM file_vibe WHERE repo = ? AND path = ?", (repo, path))
+    with Factory() as session, session.begin():
+        session.execute(delete(CallSite).where(CallSite.repo == repo, CallSite.path == path))
+        session.execute(
+            delete(ResolvedImport).where(
+                ResolvedImport.import_id.in_(
+                    select(ImportRecord.id).where(
+                        ImportRecord.repo == repo, ImportRecord.path == path
+                    )
+                )
+            )
+        )
+        session.execute(delete(ImportRecord).where(ImportRecord.repo == repo, ImportRecord.path == path))
+        session.execute(delete(Symbol).where(Symbol.repo == repo, Symbol.path == path))
+        session.execute(delete(FileVibe).where(FileVibe.repo == repo, FileVibe.path == path))
 
         symbol_id_map: dict[str, int] = {}
         for sym in syms:
-            sym_id = _upsert_symbol(conn, sym, repo)
-            if sym_id is not None:
-                key = sym.parent or ""
-                qual = f"{sym.kind}:{sym.name}:{key}:{sym.start_line}"
-                symbol_id_map[qual] = sym_id
+            existing = session.execute(
+                select(Symbol).where(
+                    Symbol.repo == repo,
+                    Symbol.path == sym.path,
+                    Symbol.name == sym.name,
+                    Symbol.kind == sym.kind,
+                    Symbol.parent == (sym.parent or ""),
+                    Symbol.start_line == sym.start_line,
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                sym_id = existing.id
+            else:
+                session.add(_sym_to_orm(sym, repo))
+                session.flush()
+                sym_id = session.execute(
+                    select(Symbol.id).where(
+                        Symbol.repo == repo,
+                        Symbol.path == sym.path,
+                        Symbol.name == sym.name,
+                        Symbol.kind == sym.kind,
+                        Symbol.parent == (sym.parent or ""),
+                        Symbol.start_line == sym.start_line,
+                    )
+                ).scalar_one()
+            symbol_id_map[_symbol_key(sym)] = sym_id
 
         for imp in imps:
-            _upsert_import(conn, imp, repo)
+            names = imp.imported_names if imp.imported_names else (imp.source,)
+            for name in names:
+                session.add(
+                    ImportRecord(
+                        repo=repo,
+                        path=imp.path,
+                        source_module=imp.source,
+                        imported_name=name,
+                        start_line=imp.start_line,
+                    )
+                )
 
         language = _language_for_path(path)
         for c in clls:
             caller_sym_id = None
             if c.caller_symbol_key is not None and c.caller_symbol_key in symbol_id_map:
                 caller_sym_id = symbol_id_map[c.caller_symbol_key]
-            _upsert_call_site(conn, c, repo, language, caller_sym_id)
+            session.add(
+                CallSite(
+                    repo=repo,
+                    path=c.path,
+                    language=language,
+                    caller_symbol_id=caller_sym_id,
+                    callee_name=c.callee_name,
+                    callee_qualifier=c.callee_qualifier,
+                    start_line=c.start_line,
+                    start_column=c.start_column,
+                    end_line=c.end_line,
+                    end_column=c.end_column,
+                )
+            )
 
         vibe = _extract_vibe(syms)
         if vibe:
-            _upsert_file_vibe(conn, repo, path, vibe)
-
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+            session.add(FileVibe(repo=repo, path=path, summary=vibe))

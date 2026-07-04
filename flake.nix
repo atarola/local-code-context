@@ -55,6 +55,7 @@
               py."tree-sitter-rust"
               tsVerilog
               py.watchfiles
+              py.sqlalchemy
             ];
 
             pythonImportsCheck = [
@@ -73,6 +74,10 @@
               "local_code_context.storage.writer"
               "local_code_context.storage.reader"
               "local_code_context.storage.resolver"
+              "local_code_context.db.engine"
+              "local_code_context.db.models"
+              "local_code_context.db.session"
+              "local_code_context.db.schema"
             ];
 
             meta = {
