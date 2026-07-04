@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Usage: ./mcp-call <tool-name> [json-args] [--db <path>]
+#
+# Examples:
+#   ./mcp-call list_repositories
+#   ./mcp-call get_workspace_context '{}'
+#   ./mcp-call get_repository_context '{"repo":"local-code-context"}'
+#   ./mcp-call list_symbols '{"repo":"local-code-context","limit":5}'
+#   ./mcp-call get_definition '{"symbol":"main"}' --db ~/my-db
+
+DB_DIR="."
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --db) DB_DIR="$2"; shift 2 ;;
+        *) POSITIONAL+=("$1"); shift ;;
+    esac
+done
+
+TOOL="${POSITIONAL[0]}"
+ARGS="${POSITIONAL[1]:-{}}"
+
+msg() {
+    echo "$1"
+}
+
+{
+    # Initialise handshake
+    msg '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}'
+    msg '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+    # Tool call
+    msg "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"$TOOL\",\"arguments\":$ARGS}}"
+} | code-context-mcp --db "$DB_DIR" 2>/dev/null | grep '"id":2' | python3 -m json.tool

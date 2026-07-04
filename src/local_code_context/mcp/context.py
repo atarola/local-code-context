@@ -104,13 +104,32 @@ def list_indexed_repositories(db_path: Path) -> list[str]:
     return [record.repo for record in _discover_repo_records(db_path)]
 
 
-def _require_repo_record(db_path: Path, repo: str) -> IndexedRepository:
+def _resolve_repo_name(db_path: Path, repo: str) -> IndexedRepository | None:
     records = _discover_repo_records(db_path)
+
     for record in records:
         if record.repo == repo:
             return record
 
-    indexed = ", ".join(record.repo for record in records) or "(none)"
+    basename = Path(repo).name
+    matches = [r for r in records if Path(r.repo).name == basename]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(
+            f"repository name {repo!r} is ambiguous; matched multiple repositories: "
+            + ", ".join(m.repo for m in matches)
+        )
+
+    return None
+
+
+def _require_repo_record(db_path: Path, repo: str) -> IndexedRepository:
+    result = _resolve_repo_name(db_path, repo)
+    if result is not None:
+        return result
+
+    indexed = ", ".join(r.repo for r in _discover_repo_records(db_path)) or "(none)"
     raise ValueError(
         f"repository {repo!r} is not indexed. Indexed repositories: {indexed}"
     )
@@ -793,13 +812,10 @@ def get_workspace_context(
         else max(1, int(max_chars_per_repo))
     )
     indexed = list_indexed_repositories(db_path)
-    wanted = indexed if repos is None else [repo for repo in repos if repo in indexed]
-    missing = [repo for repo in (repos or []) if repo not in indexed]
-    if missing:
-        indexed_text = ", ".join(indexed) or "(none)"
-        raise ValueError(
-            f"repositories not indexed: {', '.join(missing)}. Indexed repositories: {indexed_text}"
-        )
+    if repos is None:
+        wanted = indexed
+    else:
+        wanted = [_require_repo_record(db_path, repo).repo for repo in repos]
 
     packets: list[str] = []
     for repo in wanted:
