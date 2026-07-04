@@ -18,6 +18,7 @@ from local_code_context.storage.reader import (
     get_file_vibe,
     get_imports,
     list_symbols,
+    trace_callers,
     trace_export,
 )
 from local_code_context.storage.resolver import get_resolved_imports, resolve_imports_for_repo
@@ -176,6 +177,25 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
         if not parts:
             return f"(no trace found for: {name_arg})"
         return "\n".join(parts)
+    if name == "trace_callers":
+        callee_name = arguments.get("callee")
+        if not isinstance(callee_name, str) or not callee_name.strip():
+            raise ValueError("callee is required")
+        repo = _argument(arguments, "repo", None)
+        results = trace_callers(
+            config.db,
+            callee_name=callee_name.strip(),
+            repo=repo.strip() if isinstance(repo, str) else None,
+        )
+        if not results:
+            return f"(no callers found for: {callee_name})"
+        lines = []
+        for r in results:
+            lines.append(
+                f"{r['repo']}:{r['path']}:{r['start_line']}"
+                f"  {r['caller_name']} -> {r['callee_name']}"
+            )
+        return "\n".join(lines)
     if name == "list_symbols":
         repo = _argument(arguments, "repo", None)
         kind = _argument(arguments, "kind", None)
@@ -376,6 +396,29 @@ def _tools() -> list[dict[str, Any]]:
                     },
                 },
                 "required": ["name"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "trace_callers",
+            "description": (
+                "Find all call sites where a given function or method is "
+                "called. Returns caller name, callee name, and location "
+                "(repo:path:line) for each call site."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "callee": {
+                        "type": "string",
+                        "description": "Required callee name (function/method being called).",
+                    },
+                    "repo": {
+                        "type": "string",
+                        "description": "Optional repository filter.",
+                    },
+                },
+                "required": ["callee"],
                 "additionalProperties": False,
             },
         },

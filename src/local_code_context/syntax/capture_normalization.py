@@ -13,7 +13,7 @@ from local_code_context.syntax.capture_models import (
     QueryLanguageHooks,
 )
 from local_code_context.syntax.hooks import QUERY_LANGUAGE_HOOKS
-from local_code_context.syntax.models import CodeImport, CodeSymbol, ExtractionResult
+from local_code_context.syntax.models import CodeCall, CodeImport, CodeSymbol, ExtractionResult
 from local_code_context.syntax.models import ComparisonGap
 from local_code_context.syntax.parsers import get_parser_registry
 from local_code_context.syntax.queries import load_tags_query
@@ -406,6 +406,69 @@ def _capture_to_import(node: Any, source: bytes, relative_path: str) -> Captured
     )
 
 
+def _enclosing_def_name(node: Any, source: bytes) -> str | None:
+    current = getattr(node, "parent", None)
+    while current is not None:
+        node_type = getattr(current, "type", "")
+        if node_type in {"function_definition", "async_function_definition", "function_item"}:
+            for child in getattr(current, "children", []):
+                child_type = getattr(child, "type", "")
+                if child_type in {"identifier", "name"}:
+                    return _node_text(source, child).strip()
+        if node_type in {"class_definition", "impl_item", "declaration_list"}:
+            for child in getattr(current, "children", []):
+                child_type = getattr(child, "type", "")
+                if child_type in {"identifier", "type_identifier", "name"}:
+                    base = _node_text(source, child).strip()
+                    inner = _enclosing_def_name(current, source)
+                    return f"{base}.{inner}" if inner else base
+        current = getattr(current, "parent", None)
+    return None
+
+
+def _call_sites_from_captures(
+    source: bytes,
+    relative_path: str,
+    captures: list[tuple[str, Any]],
+) -> list[CodeCall]:
+    call_nodes: list[Any] = []
+    name_by_range: dict[tuple[int, int], str] = {}
+
+    for capture_name, node in captures:
+        category = _capture_category(capture_name)
+        if category == "call":
+            call_nodes.append(node)
+        elif _is_name_capture(capture_name):
+            rng = (int(getattr(node, "start_byte", 0)), int(getattr(node, "end_byte", 0)))
+            name_by_range[rng] = _node_text(source, node)
+
+    calls: list[CodeCall] = []
+    seen: set[tuple[int, str]] = set()
+    for call_node in call_nodes:
+        cs = int(getattr(call_node, "start_byte", 0))
+        ce = int(getattr(call_node, "end_byte", 0))
+        callee_name: str | None = None
+        for (ns, ne), ntext in name_by_range.items():
+            if ns >= cs and ne <= ce:
+                callee_name = ntext
+                break
+        if not callee_name:
+            continue
+
+        start_line, _ = _node_lines(call_node)
+        caller_name = _enclosing_def_name(call_node, source) or "__module__"
+        key = (start_line, callee_name)
+        if key not in seen:
+            seen.add(key)
+            calls.append(CodeCall(
+                caller_name=caller_name,
+                callee_name=callee_name,
+                path=relative_path,
+                start_line=start_line,
+            ))
+    return calls
+
+
 def _apply_symbol_hook(
     symbol: CapturedSymbol, context: ExtractionContext, hooks: QueryLanguageHooks
 ) -> CapturedSymbol | None:
@@ -602,9 +665,11 @@ def extract_result_from_captures(
         symbols, imports = hooks.postprocess(context, symbols, imports)
     deduped_symbols = _dedupe_symbols(symbols)
     deduped_imports = _dedupe_imports(imports)
+    call_sites = _call_sites_from_captures(source, relative_path, captures)
     return ExtractionResult(
         symbols=[_to_code_symbol(item) for item in deduped_symbols],
         imports=[_to_code_import(item) for item in deduped_imports],
+        calls=call_sites,
     )
 
 

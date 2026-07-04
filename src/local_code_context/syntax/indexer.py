@@ -368,6 +368,20 @@ def _build_python_records(
                 fallback_reason="no useful Python symbols extracted",
             )
 
+        calls: list[Any] = []
+        try:
+            qe = _query_extractor_for_language("python")
+            if qe is not None:
+                qr = qe.extract(source, tree, relative_path)
+                calls = qr.calls
+        except Exception:
+            pass
+        extraction = ExtractionResult(
+            symbols=extraction.symbols,
+            imports=extraction.imports,
+            calls=calls,
+        )
+
         records = build_structural_records(
             repo=repo,
             repo_root=repo_root,

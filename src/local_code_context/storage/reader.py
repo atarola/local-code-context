@@ -158,6 +158,33 @@ def list_symbols(
         conn.close()
 
 
+def trace_callers(
+    db_path: Path,
+    callee_name: str,
+    repo: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    conn = _connect(db_path)
+    if conn is None:
+        return []
+
+    try:
+        conditions = ["callee_name = ?"]
+        params: list[Any] = [callee_name]
+        if repo:
+            conditions.append("repo = ?")
+            params.append(repo)
+
+        where = " AND ".join(conditions)
+        rows = conn.execute(
+            f"SELECT DISTINCT * FROM call_sites WHERE {where} ORDER BY repo, path, start_line LIMIT ?",
+            (*params, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def get_file_vibe(
     db_path: Path,
     repo: str,

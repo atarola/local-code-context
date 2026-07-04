@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from local_code_context.storage.schema import ensure_schema, get_db_path, open_db
-from local_code_context.syntax.models import CodeImport, CodeSymbol
+from local_code_context.syntax.models import CodeCall, CodeImport, CodeSymbol
 
 
 def _upsert_symbol(conn: sqlite3.Connection, symbol: CodeSymbol, repo: str) -> None:
@@ -37,6 +37,15 @@ def _upsert_import(conn: sqlite3.Connection, imp: CodeImport, repo: str) -> None
                VALUES (?, ?, ?, ?, ?)""",
             (repo, imp.path, imp.source, name, imp.start_line),
         )
+
+
+def _upsert_call_site(conn: sqlite3.Connection, call: CodeCall, repo: str) -> None:
+    conn.execute(
+        """INSERT INTO call_sites
+           (repo, path, caller_name, callee_name, start_line)
+           VALUES (?, ?, ?, ?, ?)""",
+        (repo, call.path, call.caller_name, call.callee_name, call.start_line),
+    )
 
 
 def _upsert_file_vibe(conn: sqlite3.Connection, repo: str, path: str, summary: str) -> None:
@@ -76,15 +85,18 @@ def index_file_xref(
     extraction: Any | None = None,
     symbols: list[CodeSymbol] | None = None,
     imports: list[CodeImport] | None = None,
+    calls: list[CodeCall] | None = None,
 ) -> None:
     if extraction is not None:
         syms = extraction.symbols
         imps = extraction.imports
+        clls = extraction.calls
     else:
         syms = symbols or []
         imps = imports or []
+        clls = calls or []
 
-    if not syms:
+    if not syms and not clls:
         return
 
     xref_db = get_db_path(db_path)
@@ -98,6 +110,9 @@ def index_file_xref(
 
         for imp in imps:
             _upsert_import(conn, imp, repo)
+
+        for c in clls:
+            _upsert_call_site(conn, c, repo)
 
         vibe = _extract_vibe(syms)
         if vibe:

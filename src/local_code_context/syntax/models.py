@@ -40,9 +40,18 @@ class CodeImport:
 
 
 @dataclass(frozen=True)
+class CodeCall:
+    caller_name: str
+    callee_name: str
+    path: str
+    start_line: int
+
+
+@dataclass(frozen=True)
 class ExtractionResult:
     symbols: list[CodeSymbol]
     imports: list[CodeImport]
+    calls: list[CodeCall] = ()
 
 
 @dataclass(frozen=True)
