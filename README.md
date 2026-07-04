@@ -1,97 +1,50 @@
 # local-code-context
 
-A static-analysis MCP server for multi-repo code understanding. Uses tree-sitter
-to extract symbols and imports into a SQLite cross-reference database, then
-serves deterministic results over stdio — no embeddings, no vector search, no
-external services.
+Index your code once, then ask an MCP client questions that return only the
+relevant context. local-code-context builds a local cross-reference database
+from symbols, imports, and call sites, so you can answer questions like:
 
-## How it works
+- Where is this defined?
+- Who imports it?
+- What calls it?
+- What does this repo look like from the outside?
 
-1. `code-context-index` walks each repo with tree-sitter, extracts symbols
-   (functions, classes, constants) and imports, and writes them to
-   `xref.sqlite` alongside a content-hash manifest for incremental re-indexing.
-2. `code-context-mcp` reads the xref database and exposes an MCP server over
-   stdio with tools for symbol lookup, import chains, export tracing, and
-   repository context assembly.
+## Why use it
 
-No embedding model, no vector database, no daemon. The only dependency is
-SQLite, which Python includes in its standard library.
+- Fast answers from a local SQLite index
+- Smaller prompts and more context budget from focused context slices
+- Works locally, with no embeddings or external services
+- Gives agents deterministic code context instead of guesses
+- Reindexes incrementally, so repeated runs stay cheap
 
 ## Quick start
 
-```bash
-# Index a repo
-uv run python -m local_code_context.indexing.indexer --repo /path/to/repo --db ./codebase_index
+1. Index your repo or workspace.
+2. Start the MCP server.
+3. Point your client or agent at the server over stdio.
 
-# Start the MCP server
-uv run python -m local_code_context.mcp.server --db ./codebase_index
+```bash
+uv run code-context-index --repo /path/to/repo --db ./codebase_index
+uv run code-context-mcp --db ./codebase_index
 ```
 
-## MCP tools
-
-| Tool | What it returns |
-|---|---|
-| `list_repositories` | All indexed repository names |
-| `get_repository_context(repo, max_chars?)` | File tree, README, manifests, modules, tests, excerpts |
-| `get_workspace_context(repos?, max_chars_per_repo?)` | Compact context for multiple repos |
-| `get_definition(symbol, repo?, path?, kind?, limit?)` | Symbol definitions with file location and file vibe |
-| `get_imports(repo?, path?, limit?)` | Import graph entries |
-| `trace_export(name, repo?)` | Definition + all files that import it |
-| `list_symbols(repo?, kind?, path?, limit?)` | All symbols matching filters |
-| `resolve_imports(repo, path?, rerun?)` | Resolved import chains (import → symbol) |
-| `trace_callers(callee, repo?)` | All call sites calling a function/method |
-| `find_callers(symbol_id, limit?)` | Call sites resolved to a specific symbol ID |
-| `find_callees(caller_symbol_id, include_unresolved?, limit?)` | Calls from a specific caller symbol |
-| `find_calls_by_name(repo, callee_name, path?, limit?)` | Calls by callee name with resolved details |
-
-The server starts instantly — no model loading, no network calls.
-
-## Indexing
+If you want to index a workspace of Git repos instead:
 
 ```bash
-uv run python -m local_code_context.indexing.indexer \
-  --repo /path/to/service-a \
-  --repo /path/to/service-b \
-  --db ./codebase_index
+uv run code-context-index --workspace /path/to/code --db ./codebase_index
 ```
 
-Or index all Git repos under a workspace directory:
+## Nix setup
+
+If you prefer Nix, the same commands are exposed as flake apps:
 
 ```bash
-uv run python -m local_code_context.indexing.indexer \
-  --workspace /path/to/code \
-  --db ./codebase_index
-```
-
-Re-run any time to refresh. A `manifest.json` inside `--db` tracks content
-hashes per file; unchanged files are skipped. `xref.sqlite` is updated
-incrementally.
-
-The indexer skips `.git`, `.venv`, `node_modules`, `build`, `target`, and
-common cache directories. Files matched by `.gitignore` are excluded in Git
-repositories. Add a `.index_ignore` file to a repo for additional ignore
-patterns.
-
-## Watcher
-
-```bash
-uv run python -m local_code_context.indexing.watcher \
-  --workspace /path/to/code \
-  --db ./codebase_index
-```
-
-Auto-reindexes files on save. The watcher runs an initial full index on start,
-then watches for filesystem changes.
-
-## Nix
-
-```bash
-nix run .#index -- --workspace /path/to/code --db ./codebase_index
+nix run .#index -- --repo /path/to/repo --db ./codebase_index
 nix run .#mcp -- --db ./codebase_index
 nix run .#watch -- --workspace /path/to/code --db ./codebase_index
 ```
 
-### Home Manager module
+For a persistent watcher, use the Home Manager module:
 
 ```nix
 {
@@ -122,6 +75,70 @@ code-context-status
 code-context-down
 code-context-logs
 ```
+
+## What it answers
+
+| Question | Tool |
+|---|---|
+| "What repos are indexed?" | `list_repositories` |
+| "What is in this repo?" | `get_repository_context(repo, max_chars?)` |
+| "What context is available across repos?" | `get_workspace_context(repos?, max_chars_per_repo?)` |
+| "Where is this symbol defined?" | `get_definition(symbol, repo?, path?, kind?, limit?)` |
+| "What imports does this file have?" | `get_imports(repo?, path?, limit?)` |
+| "Who imports this export?" | `trace_export(name, repo?)` |
+| "What symbols are in this repo?" | `list_symbols(repo?, kind?, path?, limit?)` |
+| "Where does this import resolve?" | `resolve_imports(repo, path?, rerun?)` |
+| "Who calls this function?" | `trace_callers(callee, repo?)` |
+
+## How it works
+
+1. `code-context-index` walks each repo with tree-sitter, extracts symbols
+   (functions, classes, constants) and imports, and writes them to
+   `xref.sqlite` alongside a content-hash manifest for incremental re-indexing.
+2. `code-context-mcp` reads the xref database and exposes an MCP server over
+   stdio with tools for symbol lookup, import chains, export tracing, and
+   repository context assembly.
+
+No embedding model, no vector database.
+
+The server starts instantly, with no model loading and no network calls.
+
+## Indexing
+
+```bash
+uv run code-context-index \
+  --repo /path/to/service-a \
+  --repo /path/to/service-b \
+  --db ./codebase_index
+```
+
+Or index all Git repos under a workspace directory:
+
+```bash
+uv run code-context-index \
+  --workspace /path/to/code \
+  --db ./codebase_index
+```
+
+Re-run any time to refresh. A `manifest.json` inside `--db` tracks content
+hashes per file; unchanged files are skipped. `xref.sqlite` is updated
+incrementally.
+
+The indexer skips `.git`, `.venv`, `node_modules`, `build`, `target`, and
+common cache directories. Files matched by `.gitignore` are excluded in Git
+repositories. Add a `.index_ignore` file to a repo for additional ignore
+patterns.
+
+## Watcher
+
+```bash
+uv run code-context-watch \
+  --workspace /path/to/code \
+  --db ./codebase_index
+```
+
+Auto-reindexes files on save. The watcher runs an initial full index on start,
+then watches for filesystem changes.
 
 ## Schema
 
