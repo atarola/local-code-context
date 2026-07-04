@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from local_code_context.storage.schema import ensure_schema, get_db_path, open_db
-from local_code_context.storage.writer import index_file_xref
-from local_code_context.storage.resolver import resolve_call_sites_for_repo, resolve_imports_for_repo
+from local_code_context.storage.writer import delete_file_xref, index_file_xref
+from local_code_context.storage.resolver import resolve_repo_relationships
 from local_code_context.syntax.indexer import build_index_records
 
 
@@ -132,6 +132,13 @@ def file_key(repo: str, rel_path: str) -> str:
     return f"{repo}:{rel_path}"
 
 
+def parse_file_key(key: str, repo: str) -> str | None:
+    prefix = f"{repo}:"
+    if not key.startswith(prefix):
+        return None
+    return key[len(prefix):]
+
+
 def load_index_ignore(repo: Path) -> list[str]:
     path = repo / ".index_ignore"
     if not path.exists():
@@ -236,17 +243,17 @@ def index_file(
     repo: str,
     db_path: Path,
     manifest: dict[str, str],
-) -> bool:
+) -> bool | None:
     rel_path = path.relative_to(repo_root).as_posix()
     key = file_key(repo, rel_path)
     text = read_text(path)
     if text is None:
-        return False
+        return None
     try:
         source = path.read_bytes()
     except OSError as exc:
         print(f"skip unreadable: {path} ({exc})")
-        return False
+        return None
 
     digest = content_hash(text)
     if manifest.get(key) == digest:
@@ -260,15 +267,17 @@ def index_file(
         text=text,
     )
 
-    index_file_xref(
-        db_path=db_path,
-        repo=repo,
-        path=rel_path,
-        extraction=build_result.extraction,
-    )
+    if build_result.extraction is not None:
+        index_file_xref(
+            db_path=db_path,
+            repo=repo,
+            path=rel_path,
+            extraction=build_result.extraction,
+        )
+        manifest[key] = digest
+        return True
 
-    manifest[key] = digest
-    return True
+    return None
 
 
 def run_index(
@@ -284,7 +293,9 @@ def run_index(
     manifest = load_manifest(db_path)
 
     total_changed = 0
+    total_deleted = 0
     total_skipped = 0
+    total_failed = 0
 
     for repo_root in repo_paths:
         repo = repo_name(repo_root)
@@ -294,35 +305,45 @@ def run_index(
         }
 
         changed = 0
+        deleted = 0
         skipped = 0
+        failed = 0
         for path in files:
-            did_change = index_file(
+            result = index_file(
                 path=path,
                 repo_root=repo_root,
                 repo=repo,
                 db_path=db_path,
                 manifest=manifest,
             )
-            if did_change:
+            if result is True:
                 changed += 1
-            else:
+            elif result is False:
                 skipped += 1
+            else:
+                failed += 1
 
-        for key in list(manifest.keys()):
-            if key.startswith(f"{repo}:") and key not in seen_keys:
-                del manifest[key]
+        for key in sorted(manifest):
+            rel_path = parse_file_key(key, repo)
+            if rel_path is None or key in seen_keys:
+                continue
+            delete_file_xref(db_path, repo, rel_path)
+            del manifest[key]
+            deleted += 1
 
         total_changed += changed
+        total_deleted += deleted
         total_skipped += skipped
+        total_failed += failed
         print(
-            f"{repo}: indexed/updated {changed}, skipped {skipped}"
+            f"{repo}: indexed/updated {changed}, deleted {deleted}, "
+            f"skipped {skipped}, failed {failed}"
         )
 
-        resolve_imports_for_repo(db_path=db_path, repo=repo)
-        res = resolve_call_sites_for_repo(db_path=db_path, repo=repo)
+        stats = resolve_repo_relationships(db_path=db_path, repo=repo)
         print(
-            f"{repo}: call resolution: {res['resolved']} resolved, "
-            f"{res['ambiguous']} ambiguous, {res['unresolved']} unresolved"
+            f"{repo}: call resolution: {stats['resolved']} resolved, "
+            f"{stats['ambiguous']} ambiguous, {stats['unresolved']} unresolved"
         )
 
     save_manifest(db_path, manifest)

@@ -100,12 +100,19 @@ class StorageWriterTests(unittest.TestCase):
             xref_db = get_db_path(db_path)
             self.assertTrue(xref_db.exists())
 
-    def test_index_file_xref_skips_empty_extraction(self) -> None:
+    def test_index_file_xref_empty_extraction_creates_db(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir)
             index_file_xref(db_path=db_path, repo="r", path="a.py", extraction=None)
             xref_db = get_db_path(db_path)
-            self.assertFalse(xref_db.exists())
+            self.assertTrue(xref_db.exists())
+            conn = open_db(xref_db)
+            rows = conn.execute(
+                "SELECT COUNT(*) as cnt FROM symbols WHERE repo = ? AND path = ?",
+                ("r", "a.py"),
+            ).fetchone()
+            conn.close()
+            self.assertEqual(rows["cnt"], 0)
 
     def test_file_vibe_generated_from_first_five_symbols(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

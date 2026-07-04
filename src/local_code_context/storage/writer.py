@@ -94,9 +94,6 @@ def index_file_xref(
         imps = imports or []
         clls = calls or []
 
-    if not syms and not clls:
-        return
-
     engine = create_engine_for_db(db_path)
     ensure_orm_schema(engine)
     Factory = sessionmaker(bind=engine)

@@ -28,6 +28,14 @@ def resolve_imports_for_repo(db_path: Path, repo: str) -> dict[str, Any]:
         return {"resolved": 0, "unresolved": 0, "errors": []}
 
     try:
+        session.execute(
+            delete(ResolvedImport).where(
+                ResolvedImport.import_id.in_(
+                    select(ImportRecord.id).where(ImportRecord.repo == repo)
+                )
+            )
+        )
+
         imports = session.execute(
             select(ImportRecord).where(ImportRecord.repo == repo)
         ).scalars().all()
@@ -400,6 +408,12 @@ def resolve_call_sites_for_repo(db_path: Path, repo: str) -> dict[str, Any]:
         return {"resolved": 0, "ambiguous": 0, "unresolved": 0, "errors": [str(e)]}
     finally:
         session.close()
+
+
+def resolve_repo_relationships(db_path: Path, repo: str) -> dict[str, Any]:
+    import_stats = resolve_imports_for_repo(db_path, repo)
+    call_stats = resolve_call_sites_for_repo(db_path, repo)
+    return call_stats
 
 
 def get_resolved_imports(

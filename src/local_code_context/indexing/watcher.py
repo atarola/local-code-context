@@ -11,12 +11,13 @@ from local_code_context.indexing.indexer import (
     index_file,
     iter_files,
     load_manifest,
+    parse_file_key,
     repo_name,
     resolve_repos,
     save_manifest,
     run_index,
 )
-from local_code_context.storage.resolver import resolve_call_sites_for_repo
+from local_code_context.storage.resolver import resolve_repo_relationships
 from local_code_context.storage.writer import delete_file_xref
 
 
@@ -43,11 +44,10 @@ def _stale_keys_for(
 ) -> list[str]:
     repo = repo_name(repo_root)
     stale: list[str] = []
-    for key in list(manifest.keys()):
-        if key.startswith(f"{repo}:"):
-            rel_path = key[len(f"{repo}:"):]
-            if not (repo_root / rel_path).exists():
-                stale.append(key)
+    for key in sorted(manifest):
+        rel_path = parse_file_key(key, repo)
+        if rel_path is not None and not (repo_root / rel_path).exists():
+            stale.append(key)
     return stale
 
 
@@ -85,7 +85,7 @@ def _process_changes(
             continue
 
         try:
-            changed_flag = index_file(
+            result = index_file(
                 path=changed,
                 repo_root=repo_root,
                 repo=repo,
@@ -96,8 +96,10 @@ def _process_changes(
             print(f"index refresh failed for {repo}:{rel_path}: {exc}")
             counts["failed"] += 1
             continue
-        if changed_flag:
+        if result is True:
             counts["indexed"] += 1
+        elif result is None:
+            counts["failed"] += 1
 
     return counts
 
@@ -107,10 +109,10 @@ def _resolve_affected_repos(
     affected_repos: set[str],
 ) -> None:
     for repo in sorted(affected_repos):
-        res = resolve_call_sites_for_repo(db_path, repo)
+        stats = resolve_repo_relationships(db_path, repo)
         print(
-            f"call resolution for {repo}: {res['resolved']} resolved, "
-            f"{res['ambiguous']} ambiguous, {res['unresolved']} unresolved"
+            f"call resolution for {repo}: {stats['resolved']} resolved, "
+            f"{stats['ambiguous']} ambiguous, {stats['unresolved']} unresolved"
         )
 
 
@@ -144,10 +146,17 @@ def run_watch(
 
     manifest = load_manifest(db_path)
 
-    # Prune manifest entries for files that no longer exist on disk
+    affected_repos: set[str] = set()
     for repo_root in repo_paths:
+        repo = repo_name(repo_root)
         for key in _stale_keys_for(manifest, repo_root):
+            rel_path = parse_file_key(key, repo)
+            if rel_path is not None:
+                delete_file_xref(db_path, repo, rel_path)
             del manifest[key]
+            affected_repos.add(repo)
+    for repo in sorted(affected_repos):
+        resolve_repo_relationships(db_path, repo)
     if manifest:
         save_manifest(db_path, manifest)
 
@@ -175,13 +184,17 @@ def run_watch(
             f"{counts['failed']} failure(s)"
         )
 
-        affected_repos: set[str] = set()
         for repo_root in repo_paths:
             stale = _stale_keys_for(manifest, repo_root)
             if stale:
-                affected_repos.add(repo_name(repo_root))
+                repo = repo_name(repo_root)
+                affected_repos.add(repo)
                 for key in stale:
+                    rel_path = parse_file_key(key, repo)
+                    if rel_path is not None:
+                        delete_file_xref(db_path, repo, rel_path)
                     del manifest[key]
+                counts["deleted"] += len(stale)
 
         for _, path in changes:
             changed = Path(path).expanduser().resolve()

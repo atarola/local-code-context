@@ -178,24 +178,6 @@ def _build_query_records(
         )
 
     quality = evaluate_parse_quality(tree, source)
-    if not quality.usable:
-        reason = (
-            "parse quality unusable "
-            f"(errors={quality.error_nodes} missing={quality.missing_nodes} "
-            f"error_ratio={quality.error_ratio:.2f})"
-        )
-        return BuildResult(
-            records=build_text_fallback_records(
-                repo=repo,
-                repo_root=repo_root,
-                relative_path=relative_path,
-                text=text,
-                language=language,
-                reason=reason,
-            ),
-            language=language,
-            fallback_reason=reason,
-        )
 
     try:
         extraction = query_extractor.extract(source, tree, relative_path)
@@ -217,18 +199,62 @@ def _build_query_records(
             fallback_reason=str(exc),
         )
 
-    if not extraction.symbols:
-        return BuildResult(
-            records=build_text_fallback_records(
-                repo=repo,
-                repo_root=repo_root,
-                relative_path=relative_path,
-                text=text,
-                language=language,
-                reason=f"no useful {language} symbols extracted",
-            ),
+    if not quality.usable and not extraction.symbols:
+        reason = (
+            "parse quality unusable "
+            f"(errors={quality.error_nodes} missing={quality.missing_nodes} "
+            f"error_ratio={quality.error_ratio:.2f})"
+        )
+        records = build_text_fallback_records(
+            repo=repo,
+            repo_root=repo_root,
+            relative_path=relative_path,
+            text=text,
             language=language,
-            fallback_reason=f"no useful {language} symbols extracted",
+            reason=reason,
+        )
+        return BuildResult(
+            records=records,
+            language=language,
+            fallback_reason=None,
+            extraction=extraction,
+        )
+
+    if not extraction.symbols:
+        records = build_text_fallback_records(
+            repo=repo,
+            repo_root=repo_root,
+            relative_path=relative_path,
+            text=text,
+            language=language,
+            reason=f"no useful {language} symbols extracted",
+        )
+        return BuildResult(
+            records=records,
+            language=language,
+            fallback_reason=None,
+            extraction=extraction,
+        )
+
+    if not quality.usable:
+        reason = (
+            "parse quality unusable "
+            f"(errors={quality.error_nodes} missing={quality.missing_nodes} "
+            f"error_ratio={quality.error_ratio:.2f})"
+        )
+        records = build_text_fallback_records(
+            repo=repo,
+            repo_root=repo_root,
+            relative_path=relative_path,
+            text=text,
+            language=language,
+            reason=reason,
+        )
+        return BuildResult(
+            records=records,
+            language=language,
+            fallback_reason=None,
+            extraction=extraction,
         )
 
     records = build_structural_records(
@@ -315,24 +341,6 @@ def _build_python_records(
         )
 
     quality = evaluate_parse_quality(tree, source)
-    if not quality.usable:
-        reason = (
-            "parse quality unusable "
-            f"(errors={quality.error_nodes} missing={quality.missing_nodes} "
-            f"error_ratio={quality.error_ratio:.2f})"
-        )
-        return BuildResult(
-            records=build_text_fallback_records(
-                repo=repo,
-                repo_root=repo_root,
-                relative_path=relative_path,
-                text=text,
-                language="python",
-                reason=reason,
-            ),
-            language="python",
-            fallback_reason=reason,
-        )
 
     mode = python_extractor_mode.lower()
     if mode not in {"legacy", "query", "compare"}:
@@ -355,18 +363,41 @@ def _build_python_records(
                 fallback_reason=str(exc),
             )
 
-        if not extraction.symbols:
-            return BuildResult(
-                records=build_text_fallback_records(
-                    repo=repo,
-                    repo_root=repo_root,
-                    relative_path=relative_path,
-                    text=text,
-                    language="python",
-                    reason="no useful Python symbols extracted",
-                ),
+        if not quality.usable:
+            reason = (
+                "parse quality unusable "
+                f"(errors={quality.error_nodes} missing={quality.missing_nodes} "
+                f"error_ratio={quality.error_ratio:.2f})"
+            )
+            records = build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
                 language="python",
-                fallback_reason="no useful Python symbols extracted",
+                reason=reason,
+            )
+            return BuildResult(
+                records=records,
+                language="python",
+                fallback_reason=None,
+                extraction=extraction,
+            )
+
+        if not extraction.symbols:
+            records = build_text_fallback_records(
+                repo=repo,
+                repo_root=repo_root,
+                relative_path=relative_path,
+                text=text,
+                language="python",
+                reason="no useful Python symbols extracted",
+            )
+            return BuildResult(
+                records=records,
+                language="python",
+                fallback_reason=None,
+                extraction=extraction,
             )
 
         calls: list[Any] = []
@@ -559,17 +590,19 @@ def _build_assembly_records(
 ) -> BuildResult:
     extraction = _extract_assembly_symbols(text, relative_path)
     if not extraction.symbols:
-        return BuildResult(
-            records=build_text_fallback_records(
-                repo=repo,
-                repo_root=repo_root,
-                relative_path=relative_path,
-                text=text,
-                language="assembly",
-                reason="no asm labels found",
-            ),
+        records = build_text_fallback_records(
+            repo=repo,
+            repo_root=repo_root,
+            relative_path=relative_path,
+            text=text,
             language="assembly",
-            fallback_reason="no asm labels found",
+            reason="no asm labels found",
+        )
+        return BuildResult(
+            records=records,
+            language="assembly",
+            fallback_reason=None,
+            extraction=extraction,
         )
 
     records = build_structural_records(
