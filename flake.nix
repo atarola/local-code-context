@@ -163,8 +163,8 @@
 
             package = lib.mkOption {
               type = lib.types.package;
-              default = self.packages.${pkgs.system}.default;
-              defaultText = lib.literalExpression "inputs.local-code-context.packages.\${pkgs.system}.default";
+              default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+              defaultText = lib.literalExpression "inputs.local-code-context.packages.\${pkgs.stdenv.hostPlatform.system}.default";
               description = "local-code-context package to install and run.";
             };
 
