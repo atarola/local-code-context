@@ -104,6 +104,12 @@ def list_indexed_repositories(db_path: Path) -> list[str]:
     return [record.repo for record in _discover_repo_records(db_path)]
 
 
+def resolve_repo_name(db_path: Path, repo: str) -> str | None:
+    """Resolve a short repo name to its full path. Returns None if not found."""
+    record = _resolve_repo_name(db_path, repo)
+    return record.repo if record else None
+
+
 def _resolve_repo_name(db_path: Path, repo: str) -> IndexedRepository | None:
     records = _discover_repo_records(db_path)
 

@@ -12,6 +12,7 @@ from local_code_context.mcp.context import (
     get_repository_context,
     get_workspace_context,
     list_indexed_repositories,
+    resolve_repo_name,
 )
 from local_code_context.storage.reader import (
     find_callers,
@@ -82,6 +83,13 @@ def _argument(arguments: dict[str, Any], key: str, default: Any) -> Any:
     return default if value is None else value
 
 
+def _resolve_repo(config: ServerConfig, repo: str | None) -> str | None:
+    if repo is None:
+        return None
+    resolved = resolve_repo_name(config.db, repo)
+    return resolved if resolved else repo
+
+
 def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> str:
     if name == "list_repositories":
         repos = list_indexed_repositories(config.db)
@@ -94,8 +102,11 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
         repo = arguments.get("repo")
         if not isinstance(repo, str) or not repo.strip():
             raise ValueError("repo is required")
+        repo = _resolve_repo(config, repo.strip())
+        if repo is None:
+            return f"(repository not indexed: {arguments.get('repo')})"
         max_chars = arguments.get("max_chars")
-        return get_repository_context(config.db, repo.strip(), max_chars=max_chars)
+        return get_repository_context(config.db, repo, max_chars=max_chars)
     if name == "get_workspace_context":
         repos = arguments.get("repos")
         if repos is not None and not isinstance(repos, list):
@@ -107,7 +118,8 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
             for repo in repos:
                 if not isinstance(repo, str) or not repo.strip():
                     raise ValueError("repos entries must be non-empty strings")
-                repo_list.append(repo.strip())
+                resolved = _resolve_repo(config, repo.strip())
+                repo_list.append(resolved if resolved else repo.strip())
         return get_workspace_context(
             config.db, repos=repo_list, max_chars_per_repo=max_chars
         )
@@ -115,13 +127,13 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
         symbol = arguments.get("symbol")
         if not isinstance(symbol, str) or not symbol.strip():
             raise ValueError("symbol is required")
-        repo = _argument(arguments, "repo", None)
+        repo = _resolve_repo(config, _argument(arguments, "repo", None))
         path = _argument(arguments, "path", None)
         kind = _argument(arguments, "kind", None)
         limit = arguments.get("limit", 20)
         results = get_definition(
             config.db, name=symbol.strip(),
-            repo=repo.strip() if isinstance(repo, str) else None,
+            repo=repo,
             path=path.strip() if isinstance(path, str) else None,
             kind=kind.strip() if isinstance(kind, str) else None,
             limit=int(limit),
@@ -141,12 +153,12 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
             lines.append(line)
         return "\n".join(lines)
     if name == "get_imports":
-        repo = _argument(arguments, "repo", None)
+        repo = _resolve_repo(config, _argument(arguments, "repo", None))
         path = _argument(arguments, "path", None)
         limit = arguments.get("limit", 100)
         results = get_imports(
             config.db,
-            repo=repo.strip() if isinstance(repo, str) else None,
+            repo=repo,
             path=path.strip() if isinstance(path, str) else None,
             limit=int(limit),
         )
@@ -163,10 +175,10 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
         name_arg = arguments.get("name")
         if not isinstance(name_arg, str) or not name_arg.strip():
             raise ValueError("name is required")
-        repo = _argument(arguments, "repo", None)
+        repo = _resolve_repo(config, _argument(arguments, "repo", None))
         result = trace_export(
             config.db, name=name_arg.strip(),
-            repo=repo.strip() if isinstance(repo, str) else None,
+            repo=repo,
         )
         parts = []
         if result.get("definition"):
@@ -184,11 +196,11 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
         callee_name = arguments.get("callee")
         if not isinstance(callee_name, str) or not callee_name.strip():
             raise ValueError("callee is required")
-        repo = _argument(arguments, "repo", None)
+        repo = _resolve_repo(config, _argument(arguments, "repo", None))
         results = trace_callers(
             config.db,
             callee_name=callee_name.strip(),
-            repo=repo.strip() if isinstance(repo, str) else None,
+            repo=repo,
         )
         if not results:
             return f"(no callers found for: {callee_name})"
@@ -196,7 +208,7 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
         for r in results:
             lines.append(
                 f"{r['repo']}:{r['path']}:{r['start_line']}"
-                f"  {r['caller_name']} -> {r['callee_name']}"
+                f"  {r.get('caller_sym_name', '?')} -> {r['callee_name']}"
             )
         return "\n".join(lines)
     if name == "find_callers":
@@ -242,13 +254,16 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
         repo = arguments.get("repo")
         if not isinstance(repo, str) or not repo.strip():
             raise ValueError("repo is required")
+        resolved_repo = _resolve_repo(config, repo.strip())
+        if resolved_repo is None:
+            return f"(repository not indexed: {repo})"
         callee_name = arguments.get("callee_name")
         if not isinstance(callee_name, str) or not callee_name.strip():
             raise ValueError("callee_name is required")
         path = _argument(arguments, "path", None)
         limit = arguments.get("limit", 100)
         results = find_calls_by_name(
-            config.db, repo.strip(), callee_name.strip(),
+            config.db, resolved_repo, callee_name.strip(),
             path=path.strip() if isinstance(path, str) else None,
             limit=int(limit),
         )
@@ -267,13 +282,13 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
             )
         return "\n".join(lines)
     if name == "list_symbols":
-        repo = _argument(arguments, "repo", None)
+        repo = _resolve_repo(config, _argument(arguments, "repo", None))
         kind = _argument(arguments, "kind", None)
         path = _argument(arguments, "path", None)
         limit = arguments.get("limit", 100)
         results = list_symbols(
             config.db,
-            repo=repo.strip() if isinstance(repo, str) else None,
+            repo=repo,
             kind=kind.strip() if isinstance(kind, str) else None,
             path=path.strip() if isinstance(path, str) else None,
             limit=int(limit),
@@ -291,12 +306,15 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
         repo = arguments.get("repo")
         if not isinstance(repo, str) or not repo.strip():
             raise ValueError("repo is required")
+        resolved_repo = _resolve_repo(config, repo.strip())
+        if resolved_repo is None:
+            return f"(repository not indexed: {repo})"
         rerun = bool(arguments.get("rerun", False))
         if rerun:
-            run_result = resolve_imports_for_repo(config.db, repo.strip())
+            run_result = resolve_imports_for_repo(config.db, resolved_repo)
         results = get_resolved_imports(
             config.db,
-            repo=repo.strip(),
+            repo=resolved_repo,
             path=_argument(arguments, "path", None),
             limit=int(arguments.get("limit", 100)),
         )
