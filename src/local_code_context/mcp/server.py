@@ -12,10 +12,7 @@ from local_code_context.mcp.context import (
     get_repository_context,
     get_workspace_context,
     list_indexed_repositories,
-    search_code,
 )
-from local_code_context.mcp.symbols import get_symbol
-from local_code_context.retrieval.hybrid import search_code_hybrid
 from local_code_context.storage.reader import (
     get_definition,
     get_file_vibe,
@@ -24,28 +21,16 @@ from local_code_context.storage.reader import (
     trace_export,
 )
 from local_code_context.storage.resolver import get_resolved_imports, resolve_imports_for_repo
-from local_code_context.retrieval.query import (
-    DEFAULT_CHAT_MODEL,
-    DEFAULT_COLLECTION,
-    DEFAULT_DB,
-    DEFAULT_EMBED_MODEL,
-    DEFAULT_OLLAMA_URL,
-)
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "local-code-context"
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = "0.4.0"
+DEFAULT_DB = "./codebase_index"
 
 
 @dataclass(frozen=True)
 class ServerConfig:
     db: Path
-    collection: str
-    top_k: int
-    embed_model: str
-    model: str
-    ollama_url: str
-    repo: str | None
 
 
 def _send(message: dict[str, Any]) -> None:
@@ -93,77 +78,9 @@ def _argument(arguments: dict[str, Any], key: str, default: Any) -> Any:
     return default if value is None else value
 
 
-def _call_search(
-    config: ServerConfig, arguments: dict[str, Any], *, default_repo: str | None
-) -> str:
-    query = arguments.get("q")
-    if not isinstance(query, str) or not query.strip():
-        raise ValueError("q is required")
-
-    repo = _argument(arguments, "repo", default_repo)
-    if repo is not None and (not isinstance(repo, str) or not repo.strip()):
-        raise ValueError("repo must be a non-empty string when provided")
-
-    top_k = arguments.get("top_k")
-    if top_k is not None:
-        top_k = int(top_k)
-
-    show_context = bool(arguments.get("show_context", True))
-
-    return search_code(
-        config,
-        q=query,
-        repo=repo.strip() if isinstance(repo, str) else None,
-        top_k=top_k,
-        show_context=show_context,
-    )
-
-
-def _call_hybrid_search(
-    config: ServerConfig,
-    query: str,
-    repo: str | None,
-    path: str | None,
-    language: str | None,
-    limit: int | None,
-    include_lexical: bool = False,
-) -> str:
-    limit = limit or 5
-    results = search_code_hybrid(
-        config,
-        query=query,
-        repo=repo,
-        path=path,
-        language=language,
-        limit=limit,
-        include_lexical=include_lexical,
-    )
-    if not results:
-        return "(no results match the query)"
-
-    output_parts: list[str] = [f"Hybrid search results (limit={limit}):"]
-
-    for i, r in enumerate(results, 1):
-        line = (
-            f"  [{i}] {r.repo} {r.path}:{r.start_line}-{r.end_line}"
-        )
-        if r.symbol:
-            line += f" symbol={r.symbol}"
-        line += (
-            f"  final={r.final_score:.3f}"
-            f" semantic={r.semantic_score:.3f}"
-            f" lexical={r.lexical_score:.3f}"
-            f" exact_symbol={r.exact_symbol_score:.3f}"
-            f" sources={','.join(r.match_sources)}"
-        )
-        output_parts.append(line)
-
-    return "\n".join(output_parts)
-
-
 def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> str:
     if name == "list_repositories":
-        repos = list_indexed_repositories(config)
+        repos = list_indexed_repositories(config.db)
         body = (
             "\n".join(f"- {repo}" for repo in repos)
             or "(no indexed repositories found)"
@@ -174,7 +91,7 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
         if not isinstance(repo, str) or not repo.strip():
             raise ValueError("repo is required")
         max_chars = arguments.get("max_chars")
-        return get_repository_context(config, repo.strip(), max_chars=max_chars)
+        return get_repository_context(config.db, repo.strip(), max_chars=max_chars)
     if name == "get_workspace_context":
         repos = arguments.get("repos")
         if repos is not None and not isinstance(repos, list):
@@ -188,47 +105,7 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
                     raise ValueError("repos entries must be non-empty strings")
                 repo_list.append(repo.strip())
         return get_workspace_context(
-            config, repos=repo_list, max_chars_per_repo=max_chars
-        )
-    if name == "search_code":
-        return _call_search(config, arguments, default_repo=None)
-    if name == "query_codebase":
-        return _call_search(config, arguments, default_repo=config.repo)
-    if name == "get_symbol":
-        symbol = arguments.get("symbol")
-        if not isinstance(symbol, str) or not symbol.strip():
-            raise ValueError("symbol is required")
-        repo = _argument(arguments, "repo", None)
-        path = _argument(arguments, "path", None)
-        kind = _argument(arguments, "kind", None)
-        limit = arguments.get("limit")
-        if limit is not None:
-            limit = int(limit)
-        return get_symbol(
-            config,
-            symbol=symbol.strip(),
-            repo=repo.strip() if isinstance(repo, str) else None,
-            path=path.strip() if isinstance(path, str) else None,
-            kind=kind.strip() if isinstance(kind, str) else None,
-            limit=limit,
-        )
-    if name == "search_code_hybrid":
-        query = arguments.get("query")
-        if not isinstance(query, str) or not query.strip():
-            raise ValueError("query is required")
-        repo = _argument(arguments, "repo", None)
-        path = _argument(arguments, "path", None)
-        language = _argument(arguments, "language", None)
-        limit = arguments.get("limit")
-        if limit is not None:
-            limit = int(limit)
-            if limit < 1 or limit > 20:
-                raise ValueError("limit must be between 1 and 20")
-        include_lexical = bool(arguments.get("include_lexical", False))
-        return _call_hybrid_search(
-            config, query=query.strip(), repo=repo, path=path,
-            language=language, limit=limit,
-            include_lexical=include_lexical,
+            config.db, repos=repo_list, max_chars_per_repo=max_chars
         )
     if name == "get_definition":
         symbol = arguments.get("symbol")
@@ -412,154 +289,6 @@ def _tools() -> list[dict[str, Any]]:
                         "description": "Optional per-repository output limit. Default is 8000.",
                     },
                 },
-                "additionalProperties": False,
-            },
-        },
-        {
-            "name": "search_code",
-            "description": (
-                "Required args: q. Optional args: repo, top_k, show_context. Searches the "
-                "index and returns citations plus raw retrieved chunks. Omit repo to search "
-                "all indexed repositories. The model should analyze the retrieved context "
-                "itself."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "q": {
-                        "type": "string",
-                        "description": "Required search query.",
-                    },
-                    "repo": {
-                        "type": "string",
-                        "description": (
-                            "Optional repository restriction. Omit this field to search all "
-                            "indexed repositories."
-                        ),
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 50,
-                        "description": "Optional result count.",
-                    },
-                    "show_context": {
-                        "type": "boolean",
-                        "description": "Optional boolean, default true.",
-                    },
-                },
-                "required": ["q"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "name": "query_codebase",
-            "description": (
-                "Deprecated alias for search_code. Required args: q. Optional args: repo, "
-                "top_k, show_context. Omit repo to search all indexed repositories. Returns "
-                "raw retrieval context only; the model should analyze it itself."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "q": {"type": "string", "description": "Required search query."},
-                    "repo": {
-                        "type": "string",
-                        "description": "Optional repository restriction. Omit to search all indexed repositories.",
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 50,
-                        "description": "Optional result count.",
-                    },
-                    "show_context": {
-                        "type": "boolean",
-                        "description": "Optional boolean, default true.",
-                    },
-                },
-                "required": ["q"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "name": "get_symbol",
-            "description": (
-                "Retrieve indexed structural records by exact symbol name. "
-                "Searches only symbol and symbol_part records using metadata filters. "
-                "Groups multipart (split) symbols under a single entry. "
-                "Use repo, path, or kind to narrow results."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "Required exact symbol name.",
-                    },
-                    "repo": {
-                        "type": "string",
-                        "description": "Optional repository filter.",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Optional path filter.",
-                    },
-                    "kind": {
-                        "type": "string",
-                        "description": "Optional symbol-kind filter (e.g. function, class, method).",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 200,
-                        "description": "Optional maximum results. Bounded to 200.",
-                    },
-                },
-                "required": ["symbol"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "name": "search_code_hybrid",
-            "description": (
-                "Combines semantic (embedding) and exact-symbol matching by default. "
-                "Lexical (ripgrep) is auto-triggered when initial confidence is low, or "
-                "opt-in via include_lexical=true. Returns deduplicated, reranked results "
-                "with per-source scores. Filters low-confidence results for negative queries. "
-                "Use repo, path, or language to narrow."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Required search query.",
-                    },
-                    "repo": {
-                        "type": "string",
-                        "description": "Optional repository filter.",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Optional path filter.",
-                    },
-                    "language": {
-                        "type": "string",
-                        "description": "Optional language filter (e.g. python, rust).",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 20,
-                        "description": "Optional result count (1-20). Default: 5.",
-                    },
-                    "include_lexical": {
-                        "type": "boolean",
-                        "description": "Opt-in to lexical (ripgrep) matching. Default: false.",
-                    },
-                },
-                "required": ["query"],
                 "additionalProperties": False,
             },
         },
@@ -786,48 +515,12 @@ def main() -> None:
         description="Expose local-code-context as an MCP server over stdio."
     )
     parser.add_argument(
-        "--db", default=DEFAULT_DB, help=f"Chroma DB directory. Default: {DEFAULT_DB}"
-    )
-    parser.add_argument(
-        "--collection",
-        default=DEFAULT_COLLECTION,
-        help=f"Chroma collection. Default: {DEFAULT_COLLECTION}",
-    )
-    parser.add_argument(
-        "--top-k",
-        type=int,
-        default=10,
-        help="Number of chunks to retrieve. Default: 10",
-    )
-    parser.add_argument(
-        "--embed-model",
-        default=DEFAULT_EMBED_MODEL,
-        help=f"Ollama embedding model. Default: {DEFAULT_EMBED_MODEL}",
-    )
-    parser.add_argument(
-        "--model",
-        default=DEFAULT_CHAT_MODEL,
-        help=f"Ollama chat model. Default: {DEFAULT_CHAT_MODEL}",
-    )
-    parser.add_argument(
-        "--ollama-url",
-        default=DEFAULT_OLLAMA_URL,
-        help=f"Ollama base URL. Default: {DEFAULT_OLLAMA_URL}",
-    )
-    parser.add_argument(
-        "--repo",
-        help="Optional default repository restriction for the deprecated query_codebase alias.",
+        "--db", default=DEFAULT_DB, help=f"DB directory. Default: {DEFAULT_DB}"
     )
     args = parser.parse_args()
 
     config = ServerConfig(
         db=Path(args.db).expanduser().resolve(),
-        collection=args.collection,
-        top_k=args.top_k,
-        embed_model=args.embed_model,
-        model=args.model,
-        ollama_url=args.ollama_url,
-        repo=args.repo,
     )
 
     while True:

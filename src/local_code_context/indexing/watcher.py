@@ -4,22 +4,17 @@ from __future__ import annotations
 import argparse
 import time
 from pathlib import Path
-from typing import Any
 
 from local_code_context.indexing.indexer import (
-    DEFAULT_COLLECTION,
     DEFAULT_DB,
-    DEFAULT_EMBED_MODEL,
-    DEFAULT_OLLAMA_URL,
-    delete_indexed_path,
     index_file,
     load_manifest,
-    open_collection,
     repo_name,
     resolve_repos,
     save_manifest,
     run_index,
 )
+from local_code_context.storage.writer import delete_file_xref
 
 
 def _owner_repo(path: Path, repos: list[Path]) -> tuple[Path, str] | None:
@@ -32,7 +27,7 @@ def _owner_repo(path: Path, repos: list[Path]) -> tuple[Path, str] | None:
     return None
 
 
-def _change_name(change: Any) -> str:
+def _change_name(change: object) -> str:
     name = getattr(change, "name", None)
     if isinstance(name, str):
         return name
@@ -41,13 +36,10 @@ def _change_name(change: Any) -> str:
 
 def _process_changes(
     *,
-    changes: set[tuple[Any, str]],
+    changes: set[tuple[object, str]],
     repo_paths: list[Path],
-    collection: Any,
-    manifest: dict[str, Any],
+    manifest: dict[str, str],
     db_path: Path,
-    embed_model: str,
-    ollama_url: str,
 ) -> dict[str, int]:
     pending: dict[tuple[str, str], tuple[str, Path]] = {}
 
@@ -70,24 +62,18 @@ def _process_changes(
         repo_root = Path(repo_root_text)
         repo = repo_name(repo_root)
         if change_name == "deleted":
-            removed = delete_indexed_path(collection, manifest, repo, rel_path)
-            if removed:
-                counts["deleted"] += 1
-            else:
-                counts["failed"] += 1
+            delete_file_xref(db_path, repo, rel_path)
+            manifest.pop(f"{repo}:{rel_path}", None)
+            counts["deleted"] += 1
             continue
 
         try:
             changed_flag = index_file(
-                collection=collection,
                 path=changed,
                 repo_root=repo_root,
                 repo=repo,
                 db_path=db_path,
                 manifest=manifest,
-                embed_model=embed_model,
-                ollama_url=ollama_url,
-                force=False,
             )
         except Exception as exc:
             print(f"index refresh failed for {repo}:{rel_path}: {exc}")
@@ -103,9 +89,6 @@ def run_watch(
     repos: list[str],
     workspaces: list[str],
     db: str,
-    collection_name: str,
-    embed_model: str,
-    ollama_url: str,
     debounce_seconds: float,
     initial_index: bool,
 ) -> None:
@@ -118,16 +101,12 @@ def run_watch(
     if not repo_paths:
         raise SystemExit("at least one --repo or --workspace is required")
     db_path = Path(db).expanduser().resolve()
-    collection = open_collection(db_path, collection_name)
 
     if initial_index:
         print("initial index")
         run_index(
             repos=[str(repo) for repo in repo_paths],
             db=db,
-            collection_name=collection_name,
-            embed_model=embed_model,
-            ollama_url=ollama_url,
         )
     manifest = load_manifest(db_path)
 
@@ -143,11 +122,8 @@ def run_watch(
         counts = _process_changes(
             changes=changes,
             repo_paths=repo_paths,
-            collection=collection,
             manifest=manifest,
             db_path=db_path,
-            embed_model=embed_model,
-            ollama_url=ollama_url,
         )
         if not any(counts.values()):
             continue
@@ -164,7 +140,7 @@ def run_watch(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Watch repos recursively and refresh the local Chroma code index."
+        description="Watch repos recursively and refresh the local code index."
     )
     parser.add_argument(
         "--repo",
@@ -179,22 +155,7 @@ def main() -> None:
         help="Workspace directory whose immediate Git child directories should be watched as repos. Repeat for multiple workspaces.",
     )
     parser.add_argument(
-        "--db", default=DEFAULT_DB, help=f"Chroma DB directory. Default: {DEFAULT_DB}"
-    )
-    parser.add_argument(
-        "--collection",
-        default=DEFAULT_COLLECTION,
-        help=f"Chroma collection. Default: {DEFAULT_COLLECTION}",
-    )
-    parser.add_argument(
-        "--embed-model",
-        default=DEFAULT_EMBED_MODEL,
-        help=f"Ollama embedding model. Default: {DEFAULT_EMBED_MODEL}",
-    )
-    parser.add_argument(
-        "--ollama-url",
-        default=DEFAULT_OLLAMA_URL,
-        help=f"Ollama base URL. Default: {DEFAULT_OLLAMA_URL}",
+        "--db", default=DEFAULT_DB, help=f"DB directory. Default: {DEFAULT_DB}"
     )
     parser.add_argument(
         "--debounce-seconds",
@@ -213,9 +174,6 @@ def main() -> None:
         repos=args.repo,
         workspaces=args.workspace,
         db=args.db,
-        collection_name=args.collection,
-        embed_model=args.embed_model,
-        ollama_url=args.ollama_url,
         debounce_seconds=args.debounce_seconds,
         initial_index=not args.no_initial_index,
     )

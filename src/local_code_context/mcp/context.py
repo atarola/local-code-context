@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -10,7 +11,7 @@ from local_code_context.indexing.indexer import (
     iter_files,
     should_skip_path,
 )
-from local_code_context.retrieval.query import build_context, search_chunks
+from local_code_context.storage.schema import get_db_path, open_db
 
 
 IMPORTANT_FILES = [
@@ -76,52 +77,35 @@ class IndexedRepository:
     repo_root: Path | None
 
 
-def _open_collection(config: Any) -> Any:
-    import chromadb
-
-    client = chromadb.PersistentClient(path=str(config.db))
-    return client.get_or_create_collection(config.collection)
-
-
-def _collection_metadatas(collection: Any) -> list[dict[str, Any]]:
-    payload = collection.get(include=["metadatas"])
-    metadatas = payload.get("metadatas") or []
-    return [meta for meta in metadatas if isinstance(meta, dict)]
-
-
-def _discover_repo_records(config: Any) -> list[IndexedRepository]:
-    collection = _open_collection(config)
-    repos: dict[str, set[Path]] = {}
-    seen_without_root: set[str] = set()
-
-    for metadata in _collection_metadatas(collection):
-        repo = metadata.get("repo")
-        if not isinstance(repo, str) or not repo.strip():
-            continue
-        repo = repo.strip()
-        root = metadata.get("repo_root")
-        if isinstance(root, str) and root.strip():
-            repos.setdefault(repo, set()).add(Path(root).expanduser().resolve())
-        else:
-            seen_without_root.add(repo)
-
-    records: list[IndexedRepository] = []
-    for repo in sorted({*repos.keys(), *seen_without_root}):
-        roots = repos.get(repo, set())
-        if len(roots) > 1:
-            raise ValueError(
-                f"repository {repo!r} has conflicting repo_root values in the index"
-            )
-        records.append(IndexedRepository(repo=repo, repo_root=next(iter(roots), None)))
-    return records
+def _discover_repo_records(db_path: Path) -> list[IndexedRepository]:
+    xref_db = get_db_path(db_path)
+    if not xref_db.exists():
+        return []
+    conn = open_db(xref_db)
+    try:
+        rows = conn.execute(
+            "SELECT repo, root_path FROM repo_meta WHERE repo != '__schema__' AND root_path != ''"
+        ).fetchall()
+        records: list[IndexedRepository] = []
+        seen: set[str] = set()
+        for row in rows:
+            repo = row["repo"]
+            root = Path(row["root_path"]).expanduser().resolve()
+            if repo in seen:
+                continue
+            seen.add(repo)
+            records.append(IndexedRepository(repo=repo, repo_root=root if root.exists() else None))
+        return records
+    finally:
+        conn.close()
 
 
-def list_indexed_repositories(config: Any) -> list[str]:
-    return [record.repo for record in _discover_repo_records(config)]
+def list_indexed_repositories(db_path: Path) -> list[str]:
+    return [record.repo for record in _discover_repo_records(db_path)]
 
 
-def _require_repo_record(config: Any, repo: str) -> IndexedRepository:
-    records = _discover_repo_records(config)
+def _require_repo_record(db_path: Path, repo: str) -> IndexedRepository:
+    records = _discover_repo_records(db_path)
     for record in records:
         if record.repo == repo:
             return record
@@ -132,8 +116,8 @@ def _require_repo_record(config: Any, repo: str) -> IndexedRepository:
     )
 
 
-def _require_repo_root(config: Any, repo: str) -> Path:
-    record = _require_repo_record(config, repo)
+def _require_repo_root(db_path: Path, repo: str) -> Path:
+    record = _require_repo_record(db_path, repo)
     if record.repo_root is None:
         raise ValueError(
             f"repository root is missing from the index metadata for {repo!r}. "
@@ -700,13 +684,13 @@ def _render_sections(sections: list[tuple[str, str]], max_chars: int) -> str:
 
 
 def _build_repository_sections(
-    config: Any,
+    db_path: Path,
     repo: str,
     *,
     max_chars: int,
     compact: bool,
 ) -> list[tuple[str, str]]:
-    repo_root = _require_repo_root(config, repo)
+    repo_root = _require_repo_root(db_path, repo)
     files = iter_files(repo_root)
 
     important_files = [
@@ -790,16 +774,16 @@ def _build_repository_sections(
     return sections
 
 
-def get_repository_context(config: Any, repo: str, max_chars: int | None = None) -> str:
+def get_repository_context(db_path: Path, repo: str, max_chars: int | None = None) -> str:
     budget = (
         DEFAULT_REPOSITORY_MAX_CHARS if max_chars is None else max(1, int(max_chars))
     )
-    sections = _build_repository_sections(config, repo, max_chars=budget, compact=False)
+    sections = _build_repository_sections(db_path, repo, max_chars=budget, compact=False)
     return _render_sections(sections, budget)
 
 
 def get_workspace_context(
-    config: Any,
+    db_path: Path,
     repos: list[str] | None = None,
     max_chars_per_repo: int | None = None,
 ) -> str:
@@ -808,7 +792,7 @@ def get_workspace_context(
         if max_chars_per_repo is None
         else max(1, int(max_chars_per_repo))
     )
-    indexed = list_indexed_repositories(config)
+    indexed = list_indexed_repositories(db_path)
     wanted = indexed if repos is None else [repo for repo in repos if repo in indexed]
     missing = [repo for repo in (repos or []) if repo not in indexed]
     if missing:
@@ -820,53 +804,7 @@ def get_workspace_context(
     packets: list[str] = []
     for repo in wanted:
         sections = _build_repository_sections(
-            config, repo, max_chars=budget, compact=True
+            db_path, repo, max_chars=budget, compact=True
         )
         packets.append(_render_sections(sections, budget))
     return "\n\n".join(packets)
-
-
-def search_code(
-    config: Any,
-    q: str,
-    repo: str | None = None,
-    top_k: int | None = None,
-    show_context: bool = True,
-) -> str:
-    query = q.strip()
-    if not query:
-        raise ValueError("q is required")
-
-    hits = search_chunks(
-        db_path=config.db,
-        collection_name=config.collection,
-        query=query,
-        embed_model=config.embed_model,
-        ollama_url=config.ollama_url,
-        top_k=top_k if top_k is not None else config.top_k,
-        repo=repo,
-    )
-
-    if not hits:
-        return (
-            "=== Search query ===\n"
-            f"{query}\n\n"
-            "=== Retrieved sources ===\n"
-            "(no indexed chunks matched the query)\n"
-        )
-
-    source_lines = []
-    for index, hit in enumerate(hits, start=1):
-        metadata = hit["metadata"]
-        citation = f"{metadata['repo']}:{metadata['path']}:{metadata['start_line']}-{metadata['end_line']}"
-        source_lines.append(f"[{index}] {citation} distance={hit['distance']:.4f}")
-
-    context = build_context(hits) if show_context else "(context suppressed)"
-    return (
-        "=== Search query ===\n"
-        f"{query}\n\n"
-        "=== Retrieved sources ===\n"
-        + "\n".join(source_lines)
-        + "\n\n=== Retrieved context ===\n"
-        + context
-    )

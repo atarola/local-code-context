@@ -1,5 +1,5 @@
 {
-  description = "Local multi-repo code retrieval with Chroma and Ollama";
+  description = "Local multi-repo code retrieval with tree-sitter and SQLite";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -35,8 +35,6 @@
             ];
 
             dependencies = [
-              py.chromadb
-              py.requests
               py."tree-sitter"
               py."tree-sitter-python"
               py."tree-sitter-rust"
@@ -50,19 +48,21 @@
               "local_code_context.mcp.context"
               "local_code_context.mcp.server"
               "local_code_context.syntax.legacy_python"
-              "local_code_context.syntax.rendering"
               "local_code_context.syntax.models"
               "local_code_context.syntax.indexer"
-              "local_code_context.retrieval.query"
               "local_code_context.syntax.parsers"
               "local_code_context.syntax.extraction"
               "local_code_context.syntax.queries"
+              "local_code_context.storage.schema"
+              "local_code_context.storage.writer"
+              "local_code_context.storage.reader"
+              "local_code_context.storage.resolver"
             ];
 
             meta = {
-              description = "Local multi-repo code retrieval with Chroma and Ollama";
+              description = "Local multi-repo code retrieval with tree-sitter and SQLite";
               license = pkgs.lib.licenses.mit;
-              mainProgram = "code-context-query";
+              mainProgram = "code-context-mcp";
             };
           };
         }
@@ -78,10 +78,9 @@
           };
         in
         {
-          default = app "code-context-query";
+          default = app "code-context-mcp";
           index = app "code-context-index";
           mcp = app "code-context-mcp";
-          query = app "code-context-query";
           watch = app "code-context-watch";
         }
       );
@@ -103,53 +102,12 @@
             pkgs.zlib
             pkgs.gcc.cc.lib
           ];
-          commonShellHook = ''
-            export OLLAMA_HOST=''${OLLAMA_HOST:-127.0.0.1:11434}
-            export LOCAL_CODE_CONTEXT_OLLAMA_URL="http://$OLLAMA_HOST"
-
-            ollama-up() {
-              systemctl --user start ollama
-            }
-
-            ollama-down() {
-              systemctl --user stop ollama
-            }
-
-            ollama-status() {
-              if systemctl --user is-active --quiet ollama; then
-                echo "ollama.service is running"
-              else
-                echo "ollama.service is not running"
-              fi
-              echo
-              systemctl --user status ollama --no-pager --lines=12 || true
-              echo
-              echo "Recent logs:"
-              journalctl --user -u ollama -n 40 --no-pager || true
-            }
-
-            echo "Ollama helpers: ollama-up, ollama-status, ollama-down"
-          '';
         in
         {
           default = pkgs.mkShell {
-            packages = commonPackages ++ [
-              pkgs.ollama
-            ];
-
+            packages = commonPackages;
             LD_LIBRARY_PATH = commonLibraryPath;
-
-            shellHook = commonShellHook;
-          };
-
-          cuda = pkgs.mkShell {
-            packages = commonPackages ++ [
-              pkgs.ollama-cuda
-            ];
-
-            LD_LIBRARY_PATH = commonLibraryPath;
-
-            shellHook = commonShellHook;
+            shellHook = "";
           };
         }
       );
@@ -173,21 +131,10 @@
               repoArgs
               workspaceArgs
               "--db ${lib.escapeShellArg cfg.db}"
-              "--collection ${lib.escapeShellArg cfg.collection}"
-              "--embed-model ${lib.escapeShellArg cfg.embedModel}"
-              "--ollama-url ${lib.escapeShellArg cfg.ollamaUrl}"
               "--debounce-seconds ${toString cfg.debounceSeconds}"
             ]
             ++ lib.optional (!cfg.initialIndex) "--no-initial-index"
           );
-          environmentList = lib.mapAttrsToList (name: value: "${name}=${value}") (
-            cfg.environment
-            // {
-              OLLAMA_HOST = lib.removePrefix "http://" (lib.removePrefix "https://" cfg.ollamaUrl);
-            }
-          );
-          systemctl = if cfg.ollamaServiceScope == "user" then "systemctl --user" else "sudo systemctl";
-          systemctlStatus = if cfg.ollamaServiceScope == "user" then "systemctl --user" else "systemctl";
         in
         {
           options.services.local-code-context = {
@@ -223,59 +170,7 @@
               type = lib.types.str;
               default = "${config.home.homeDirectory}/.local/share/local-code-context/codebase_index";
               defaultText = lib.literalExpression ''"''${config.home.homeDirectory}/.local/share/local-code-context/codebase_index"'';
-              description = "Persistent Chroma database directory.";
-            };
-
-            collection = lib.mkOption {
-              type = lib.types.str;
-              default = "code_chunks";
-              description = "Chroma collection name.";
-            };
-
-            embedModel = lib.mkOption {
-              type = lib.types.str;
-              default = "nomic-embed-text";
-              description = "Ollama embedding model.";
-            };
-
-            ollamaUrl = lib.mkOption {
-              type = lib.types.str;
-              default = "http://127.0.0.1:11434";
-              description = "Ollama HTTP API base URL.";
-            };
-
-            ollamaPackage = lib.mkOption {
-              type = lib.types.package;
-              default = pkgs.ollama;
-              defaultText = lib.literalExpression "pkgs.ollama";
-              description = "Ollama package to install into the Home Manager profile.";
-            };
-
-            installOllama = lib.mkOption {
-              type = lib.types.bool;
-              default = true;
-              description = "Install the Ollama CLI into the Home Manager profile.";
-            };
-
-            ollamaServiceName = lib.mkOption {
-              type = lib.types.str;
-              default = "ollama";
-              description = "Systemd service name for the Ollama daemon.";
-            };
-
-            ollamaServiceScope = lib.mkOption {
-              type = lib.types.enum [
-                "system"
-                "user"
-              ];
-              default = "system";
-              description = "Whether aliases target a system or user Ollama service.";
-            };
-
-            manageOllama = lib.mkOption {
-              type = lib.types.bool;
-              default = false;
-              description = "Create a Home Manager user service for `ollama serve`. Leave disabled if Ollama is configured elsewhere.";
+              description = "SQLite database directory.";
             };
 
             debounceSeconds = lib.mkOption {
@@ -306,16 +201,14 @@
             environment = lib.mkOption {
               type = lib.types.attrsOf lib.types.str;
               default = { };
-              example = {
-                OLLAMA_HOST = "127.0.0.1:11434";
-              };
+              example = { };
               description = "Additional environment variables for the watcher service.";
             };
 
             shellAliases = lib.mkOption {
               type = lib.types.bool;
               default = true;
-              description = "Add shell aliases for managing Ollama and the Home Manager user service.";
+              description = "Add shell aliases for managing the watcher user service.";
             };
           };
 
@@ -329,42 +222,19 @@
 
             home.packages = [
               package
-            ]
-            ++ lib.optional cfg.installOllama cfg.ollamaPackage;
+            ];
 
             systemd.user.services.local-code-context-watch = {
               Unit = {
-                Description = "Local code context Chroma index watcher";
-                After = [
-                  "network-online.target"
-                  "${cfg.ollamaServiceName}.service"
-                ];
+                Description = "Local code context SQLite index watcher";
+                After = [ "network-online.target" ];
               };
 
               Service = {
                 Type = "simple";
                 WorkingDirectory = cfg.workingDirectory;
                 ExecStart = "${package}/bin/code-context-watch ${watchArgs}";
-                Environment = environmentList;
-                Restart = "on-failure";
-                RestartSec = "10s";
-              };
-
-              Install = lib.mkIf cfg.autoStart {
-                WantedBy = [ "default.target" ];
-              };
-            };
-
-            systemd.user.services.${cfg.ollamaServiceName} = lib.mkIf cfg.manageOllama {
-              Unit = {
-                Description = "Ollama local model server";
-                After = [ "network-online.target" ];
-              };
-
-              Service = {
-                Type = "simple";
-                ExecStart = "${cfg.ollamaPackage}/bin/ollama serve";
-                Environment = environmentList;
+                Environment = lib.mapAttrsToList (name: value: "${name}=${value}") cfg.environment;
                 Restart = "on-failure";
                 RestartSec = "10s";
               };
@@ -375,9 +245,6 @@
             };
 
             home.shellAliases = lib.mkIf cfg.shellAliases {
-              ollama-up = "${systemctl} start ${cfg.ollamaServiceName}";
-              ollama-down = "${systemctl} stop ${cfg.ollamaServiceName}";
-              ollama-status = "${systemctlStatus} status ${cfg.ollamaServiceName} --no-pager --lines=12";
               code-context-up = "systemctl --user start local-code-context-watch";
               code-context-status = "systemctl --user status local-code-context-watch";
               code-context-down = "systemctl --user stop local-code-context-watch";

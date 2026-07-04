@@ -55,6 +55,19 @@ def _extract_vibe(symbols: list[CodeSymbol]) -> str:
     return "; ".join(parts) if parts else ""
 
 
+def delete_file_xref(db_path: Path, repo: str, path: str) -> None:
+    xref_db = get_db_path(db_path)
+    conn = open_db(xref_db)
+    try:
+        conn.execute("DELETE FROM symbols WHERE repo = ? AND path = ?", (repo, path))
+        conn.execute("DELETE FROM imports WHERE repo = ? AND path = ?", (repo, path))
+        conn.execute("DELETE FROM call_sites WHERE repo = ? AND path = ?", (repo, path))
+        conn.execute("DELETE FROM file_vibe WHERE repo = ? AND path = ?", (repo, path))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def index_file_xref(
     db_path: Path,
     repo: str,

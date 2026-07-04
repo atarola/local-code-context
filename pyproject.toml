@@ -1,13 +1,11 @@
 [project]
 name = "local-code-context"
 version = "0.1.0"
-description = "Local multi-repo code retrieval with Chroma and Ollama"
+description = "Local multi-repo code retrieval with tree-sitter and SQLite"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
-    "chromadb>=0.5.0",
-    "requests>=2.31.0",
     "tree-sitter==0.25.2",
     "tree-sitter-python>=0.23.0",
     "tree-sitter-rust>=0.24.0",
@@ -16,7 +14,6 @@ dependencies = [
 
 [project.scripts]
 code-context-index = "local_code_context.indexing.indexer:main"
-code-context-query = "local_code_context.retrieval.query:main"
 code-context-watch = "local_code_context.indexing.watcher:main"
 code-context-mcp = "local_code_context.mcp.server:main"
 

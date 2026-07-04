@@ -67,7 +67,10 @@ class MCPTransportTests(unittest.TestCase):
                 self.assertIn("list_repositories", tool_names)
                 self.assertIn("get_repository_context", tool_names)
                 self.assertIn("get_workspace_context", tool_names)
-                self.assertIn("search_code", tool_names)
+                self.assertNotIn("search_code", tool_names)
+                self.assertIn("get_definition", tool_names)
+                self.assertIn("list_symbols", tool_names)
+                self.assertIn("resolve_imports", tool_names)
             finally:
                 if proc.stdin is not None:
                     proc.stdin.close()
