@@ -14,6 +14,9 @@ from local_code_context.mcp.context import (
     list_indexed_repositories,
 )
 from local_code_context.storage.reader import (
+    find_callers,
+    find_callees,
+    find_calls_by_name,
     get_definition,
     get_file_vibe,
     get_imports,
@@ -194,6 +197,73 @@ def _call_tool(config: ServerConfig, name: str, arguments: dict[str, Any]) -> st
             lines.append(
                 f"{r['repo']}:{r['path']}:{r['start_line']}"
                 f"  {r['caller_name']} -> {r['callee_name']}"
+            )
+        return "\n".join(lines)
+    if name == "find_callers":
+        symbol_id = arguments.get("symbol_id")
+        if not isinstance(symbol_id, int):
+            raise ValueError("symbol_id is required")
+        limit = arguments.get("limit", 100)
+        results = find_callers(config.db, symbol_id, limit=int(limit))
+        if not results:
+            return f"(no callers found for symbol_id: {symbol_id})"
+        lines = []
+        for r in results:
+            lines.append(
+                f"{r['repo']}:{r['path']}:{r['start_line']}:{r['start_column']}"
+                f"  {r.get('caller_sym_name', '?')} -> {r['callee_name']}"
+                f"  status={r['resolution_status']}"
+            )
+        return "\n".join(lines)
+    if name == "find_callees":
+        caller_symbol_id = arguments.get("caller_symbol_id")
+        if not isinstance(caller_symbol_id, int):
+            raise ValueError("caller_symbol_id is required")
+        include_unresolved = bool(arguments.get("include_unresolved", True))
+        limit = arguments.get("limit", 100)
+        results = find_callees(
+            config.db, caller_symbol_id,
+            include_unresolved=include_unresolved, limit=int(limit),
+        )
+        if not results:
+            return f"(no callees found for caller_symbol_id: {caller_symbol_id})"
+        lines = []
+        for r in results:
+            resolved = (
+                f" -> {r['resolved_sym_name']} @ {r['resolved_sym_path']}"
+                if r.get("resolved_sym_name") else ""
+            )
+            lines.append(
+                f"{r['repo']}:{r['path']}:{r['start_line']}:{r['start_column']}"
+                f"  {r['callee_name']}{resolved}"
+            )
+        return "\n".join(lines)
+    if name == "find_calls_by_name":
+        repo = arguments.get("repo")
+        if not isinstance(repo, str) or not repo.strip():
+            raise ValueError("repo is required")
+        callee_name = arguments.get("callee_name")
+        if not isinstance(callee_name, str) or not callee_name.strip():
+            raise ValueError("callee_name is required")
+        path = _argument(arguments, "path", None)
+        limit = arguments.get("limit", 100)
+        results = find_calls_by_name(
+            config.db, repo.strip(), callee_name.strip(),
+            path=path.strip() if isinstance(path, str) else None,
+            limit=int(limit),
+        )
+        if not results:
+            return f"(no calls found for {callee_name} in repo: {repo})"
+        lines = []
+        for r in results:
+            resolved = (
+                f" -> {r['resolved_sym_name']} ({r['resolved_sym_kind']}) @ {r['resolved_sym_path']}"
+                if r.get("resolved_sym_name") else ""
+            )
+            lines.append(
+                f"{r['path']}:{r['start_line']}:{r['start_column']}"
+                f"  {r.get('caller_sym_name', '?')} -> {r['callee_name']}{resolved}"
+                f"  [{r['resolution_status']}]"
             )
         return "\n".join(lines)
     if name == "list_symbols":
@@ -419,6 +489,90 @@ def _tools() -> list[dict[str, Any]]:
                     },
                 },
                 "required": ["callee"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "find_callers",
+            "description": (
+                "Find all call sites that resolve to a given symbol ID. "
+                "Returns caller name, callee name, location, and resolution status."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "symbol_id": {
+                        "type": "integer",
+                        "description": "Required symbol ID (use get_definition to find it).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "description": "Optional max results. Default: 100.",
+                    },
+                },
+                "required": ["symbol_id"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "find_callees",
+            "description": (
+                "List all call sites from a given caller symbol. "
+                "Optionally filter to only resolved calls."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "caller_symbol_id": {
+                        "type": "integer",
+                        "description": "Required caller symbol ID.",
+                    },
+                    "include_unresolved": {
+                        "type": "boolean",
+                        "description": "Include unresolved call sites. Default: true.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "description": "Optional max results. Default: 100.",
+                    },
+                },
+                "required": ["caller_symbol_id"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "find_calls_by_name",
+            "description": (
+                "Find all call sites in a repo matching a callee name, "
+                "with resolved symbol details. Optionally filter by path."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Required repository name.",
+                    },
+                    "callee_name": {
+                        "type": "string",
+                        "description": "Required callee function/method name.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional path filter.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "description": "Optional max results. Default: 100.",
+                    },
+                },
+                "required": ["repo", "callee_name"],
                 "additionalProperties": False,
             },
         },

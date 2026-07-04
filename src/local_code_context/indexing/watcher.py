@@ -14,6 +14,7 @@ from local_code_context.indexing.indexer import (
     save_manifest,
     run_index,
 )
+from local_code_context.storage.resolver import resolve_call_sites_for_repo
 from local_code_context.storage.writer import delete_file_xref
 
 
@@ -133,6 +134,21 @@ def run_watch(
             f"{counts['indexed']} update(s), {counts['deleted']} deletion(s), "
             f"{counts['failed']} failure(s)"
         )
+
+        # Re-resolve call sites for every repo that had changes
+        affected_repos: set[str] = set()
+        for _, path in changes:
+            changed = Path(path).expanduser().resolve()
+            owner = _owner_repo(changed, repo_paths)
+            if owner is not None:
+                affected_repos.add(repo_name(owner[0]))
+        for repo in sorted(affected_repos):
+            res = resolve_call_sites_for_repo(db_path, repo)
+            print(
+                f"call resolution for {repo}: {res['resolved']} resolved, "
+                f"{res['ambiguous']} ambiguous, {res['unresolved']} unresolved"
+            )
+
         save_manifest(db_path, manifest)
         elapsed = time.monotonic() - start
         print(f"refresh complete in {elapsed:.1f}s")

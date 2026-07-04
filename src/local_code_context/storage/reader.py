@@ -169,15 +169,118 @@ def trace_callers(
         return []
 
     try:
-        conditions = ["callee_name = ?"]
+        conditions = ["cs.callee_name = ?"]
         params: list[Any] = [callee_name]
         if repo:
-            conditions.append("repo = ?")
+            conditions.append("cs.repo = ?")
             params.append(repo)
 
         where = " AND ".join(conditions)
         rows = conn.execute(
-            f"SELECT DISTINCT * FROM call_sites WHERE {where} ORDER BY repo, path, start_line LIMIT ?",
+            f"""SELECT cs.*, s.name AS caller_sym_name, s.kind AS caller_sym_kind,
+                       rs.name AS resolved_sym_name, rs.kind AS resolved_sym_kind,
+                       rs.path AS resolved_sym_path
+                FROM call_sites cs
+                LEFT JOIN symbols s ON cs.caller_symbol_id = s.id
+                LEFT JOIN symbols rs ON cs.resolved_symbol_id = rs.id
+                WHERE {where}
+                ORDER BY cs.repo, cs.path, cs.start_line
+                LIMIT ?""",
+            (*params, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def find_callers(
+    db_path: Path,
+    symbol_id: int,
+    *,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    conn = _connect(db_path)
+    if conn is None:
+        return []
+
+    try:
+        rows = conn.execute(
+            """SELECT cs.*, cs2.name AS caller_sym_name, cs2.kind AS caller_sym_kind
+               FROM call_sites cs
+               LEFT JOIN symbols cs2 ON cs.caller_symbol_id = cs2.id
+               WHERE cs.resolved_symbol_id = ?
+               ORDER BY cs.repo, cs.path, cs.start_line, cs.start_column, cs.callee_name
+               LIMIT ?""",
+            (symbol_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def find_callees(
+    db_path: Path,
+    caller_symbol_id: int,
+    *,
+    include_unresolved: bool = True,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    conn = _connect(db_path)
+    if conn is None:
+        return []
+
+    try:
+        conditions = ["cs.caller_symbol_id = ?"]
+        params: list[Any] = [caller_symbol_id]
+        if not include_unresolved:
+            conditions.append("cs.resolved_symbol_id IS NOT NULL")
+
+        where = " AND ".join(conditions)
+        rows = conn.execute(
+            f"""SELECT cs.*, rs.name AS resolved_sym_name, rs.kind AS resolved_sym_kind,
+                       rs.path AS resolved_sym_path
+                FROM call_sites cs
+                LEFT JOIN symbols rs ON cs.resolved_symbol_id = rs.id
+                WHERE {where}
+                ORDER BY cs.repo, cs.path, cs.start_line, cs.start_column, cs.callee_name
+                LIMIT ?""",
+            (*params, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def find_calls_by_name(
+    db_path: Path,
+    repo: str,
+    callee_name: str,
+    *,
+    path: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    conn = _connect(db_path)
+    if conn is None:
+        return []
+
+    try:
+        conditions = ["cs.repo = ?", "cs.callee_name = ?"]
+        params: list[Any] = [repo, callee_name]
+        if path:
+            conditions.append("cs.path = ?")
+            params.append(path)
+
+        where = " AND ".join(conditions)
+        rows = conn.execute(
+            f"""SELECT cs.*, s.name AS caller_sym_name, s.kind AS caller_sym_kind,
+                       rs.name AS resolved_sym_name, rs.kind AS resolved_sym_kind,
+                       rs.path AS resolved_sym_path
+                FROM call_sites cs
+                LEFT JOIN symbols s ON cs.caller_symbol_id = s.id
+                LEFT JOIN symbols rs ON cs.resolved_symbol_id = rs.id
+                WHERE {where}
+                ORDER BY cs.repo, cs.path, cs.start_line, cs.start_column, cs.callee_name
+                LIMIT ?""",
             (*params, limit),
         ).fetchall()
         return [dict(row) for row in rows]

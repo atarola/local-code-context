@@ -40,7 +40,9 @@
 (call
   function: [
     (identifier) @name
-    (attribute attribute: (identifier) @name)
+    (attribute
+      object: (_) @qualifier
+      attribute: (identifier) @name)
   ]) @reference.call
 
 (import_statement) @reference.import

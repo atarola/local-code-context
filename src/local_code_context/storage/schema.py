@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 CREATE_SYMBOLS = """
 CREATE TABLE IF NOT EXISTS symbols (
@@ -36,12 +36,25 @@ CREATE TABLE IF NOT EXISTS imports (
 
 CREATE_CALL_SITES = """
 CREATE TABLE IF NOT EXISTS call_sites (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    repo            TEXT NOT NULL,
-    path            TEXT NOT NULL,
-    caller_name     TEXT NOT NULL,
-    callee_name     TEXT NOT NULL,
-    start_line      INTEGER NOT NULL DEFAULT 0
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo                TEXT NOT NULL,
+    path                TEXT NOT NULL,
+    language            TEXT NOT NULL DEFAULT '',
+
+    caller_symbol_id    INTEGER,
+    callee_name         TEXT NOT NULL,
+    callee_qualifier    TEXT,
+
+    start_line          INTEGER NOT NULL,
+    start_column        INTEGER NOT NULL DEFAULT 0,
+    end_line            INTEGER NOT NULL DEFAULT 0,
+    end_column          INTEGER NOT NULL DEFAULT 0,
+
+    resolved_symbol_id  INTEGER,
+    resolution_status   TEXT NOT NULL DEFAULT 'unresolved',
+
+    FOREIGN KEY (caller_symbol_id) REFERENCES symbols(id) ON DELETE CASCADE,
+    FOREIGN KEY (resolved_symbol_id) REFERENCES symbols(id) ON DELETE SET NULL
 );
 """
 
@@ -86,6 +99,15 @@ CREATE_INDEX_IMPORTS_SOURCE = (
 CREATE_INDEX_CALL_SITES_CALLEE = (
     "CREATE INDEX IF NOT EXISTS idx_call_sites_callee ON call_sites(repo, callee_name)"
 )
+CREATE_INDEX_CALL_SITES_CALLER = (
+    "CREATE INDEX IF NOT EXISTS idx_call_sites_caller ON call_sites(caller_symbol_id)"
+)
+CREATE_INDEX_CALL_SITES_RESOLVED = (
+    "CREATE INDEX IF NOT EXISTS idx_call_sites_resolved ON call_sites(resolved_symbol_id)"
+)
+CREATE_INDEX_CALL_SITES_PATH = (
+    "CREATE INDEX IF NOT EXISTS idx_call_sites_path ON call_sites(repo, path)"
+)
 
 ALL_TABLES = [
     CREATE_SYMBOLS,
@@ -101,7 +123,48 @@ ALL_INDEXES = [
     CREATE_INDEX_SYMBOLS_PATH,
     CREATE_INDEX_IMPORTS_SOURCE,
     CREATE_INDEX_CALL_SITES_CALLEE,
+    CREATE_INDEX_CALL_SITES_CALLER,
+    CREATE_INDEX_CALL_SITES_RESOLVED,
+    CREATE_INDEX_CALL_SITES_PATH,
 ]
+
+
+def _get_schema_version(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT last_indexed FROM repo_meta WHERE repo = '__schema__'"
+    ).fetchone()
+    if row is None:
+        return 0
+    try:
+        return int(row["last_indexed"])
+    except (ValueError, TypeError):
+        return 0
+
+
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    conn.execute("DROP TABLE IF EXISTS call_sites")
+    for idx in (
+        "idx_call_sites_callee",
+    ):
+        conn.execute(f"DROP INDEX IF EXISTS {idx}")
+    conn.execute(CREATE_CALL_SITES)
+
+
+def ensure_latest_schema(conn: sqlite3.Connection) -> None:
+    version = _get_schema_version(conn)
+    if version < 2:
+        conn.executescript("BEGIN TRANSACTION")
+        try:
+            _migrate_v1_to_v2(conn)
+            conn.execute(
+                "INSERT OR REPLACE INTO repo_meta (id, repo, root_path, last_indexed) "
+                "VALUES (-1, '__schema__', '', ?)",
+                (str(SCHEMA_VERSION),),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def get_db_path(db_dir: Path) -> Path:
@@ -127,3 +190,4 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         (str(SCHEMA_VERSION),),
     )
     conn.commit()
+    ensure_latest_schema(conn)

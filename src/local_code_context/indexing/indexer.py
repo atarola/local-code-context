@@ -11,6 +11,7 @@ from typing import Any
 
 from local_code_context.storage.schema import ensure_schema, get_db_path, open_db
 from local_code_context.storage.writer import index_file_xref
+from local_code_context.storage.resolver import resolve_call_sites_for_repo, resolve_imports_for_repo
 from local_code_context.syntax.indexer import build_index_records
 
 
@@ -315,6 +316,13 @@ def run_index(
         total_skipped += skipped
         print(
             f"{repo}: indexed/updated {changed}, skipped {skipped}"
+        )
+
+        resolve_imports_for_repo(db_path=db_path, repo=repo)
+        res = resolve_call_sites_for_repo(db_path=db_path, repo=repo)
+        print(
+            f"{repo}: call resolution: {res['resolved']} resolved, "
+            f"{res['ambiguous']} ambiguous, {res['unresolved']} unresolved"
         )
 
     save_manifest(db_path, manifest)

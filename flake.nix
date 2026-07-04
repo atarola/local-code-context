@@ -21,6 +21,21 @@
         let
           pkgs = import nixpkgs { inherit system; };
           py = pkgs.python313Packages;
+          tsVerilog = py.buildPythonPackage {
+            pname = "tree-sitter-verilog";
+            version = "1.0.3";
+            format = "wheel";
+
+            src = pkgs.fetchurl (if builtins.match "aarch64-.*" system != null then {
+              url = "https://files.pythonhosted.org/packages/38/3e/b59fe590400af935d42c81cd03d3e9669a9e3a4c305a89e8e491b46a9a0f/tree_sitter_verilog-1.0.3-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl";
+              sha256 = "7d617dff782a8bf56fabac8d1e782ee4ca9ebe2977682eb02d1596ff7ef89958";
+            } else {
+              url = "https://files.pythonhosted.org/packages/2a/c1/8782535dbb6ea1f3556eb2bc473f5f131339739278775171fc42b0a57536/tree_sitter_verilog-1.0.3-cp39-abi3-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl";
+              sha256 = "747dd7d4bc95fb389bc37225f82d16f0c40549856e9a244be3ff9d7bfe62b730";
+            });
+
+            pythonImportsCheck = [ "tree_sitter_verilog" ];
+          };
         in
         {
           default = py.buildPythonApplication {
@@ -38,6 +53,7 @@
               py."tree-sitter"
               py."tree-sitter-python"
               py."tree-sitter-rust"
+              tsVerilog
               py.watchfiles
             ];
 

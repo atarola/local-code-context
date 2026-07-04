@@ -55,10 +55,13 @@
 
 (call_expression
     function: (field_expression
+        value: (_) @qualifier
         field: (field_identifier) @name.reference.call)) @reference.call
 
-(macro_invocation
-    macro: (identifier) @name.reference.call) @reference.call
+(call_expression
+    function: (scoped_identifier
+        path: (_) @qualifier
+        name: (identifier) @name.reference.call)) @reference.call
 
 (use_declaration) @reference.import
 

@@ -45,6 +45,23 @@ class CodeCall:
     callee_name: str
     path: str
     start_line: int
+    callee_qualifier: str | None = None
+    start_column: int = 0
+    end_line: int = 0
+    end_column: int = 0
+    caller_symbol_key: str | None = None
+
+
+@dataclass(frozen=True)
+class EnclosingDef:
+    kind: str
+    name: str
+    parent: str | None
+    start_line: int
+    start_byte: int
+
+    def symbol_key(self) -> str:
+        return f"{self.kind}:{self.name}:{self.parent or ''}:{self.start_line}"
 
 
 @dataclass(frozen=True)

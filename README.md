@@ -39,6 +39,10 @@ uv run python -m local_code_context.mcp.server --db ./codebase_index
 | `trace_export(name, repo?)` | Definition + all files that import it |
 | `list_symbols(repo?, kind?, path?, limit?)` | All symbols matching filters |
 | `resolve_imports(repo, path?, rerun?)` | Resolved import chains (import → symbol) |
+| `trace_callers(callee, repo?)` | All call sites calling a function/method |
+| `find_callers(symbol_id, limit?)` | Call sites resolved to a specific symbol ID |
+| `find_callees(caller_symbol_id, include_unresolved?, limit?)` | Calls from a specific caller symbol |
+| `find_calls_by_name(repo, callee_name, path?, limit?)` | Calls by callee name with resolved details |
 
 The server starts instantly — no model loading, no network calls.
 
@@ -130,4 +134,4 @@ code-context-logs
 | `file_vibe` | Per-file summary derived from first 5 symbol signatures |
 | `repo_meta` | Name, root path, last indexed |
 | `resolved_imports` | Maps `import_id` → `symbol_id` (post-indexing resolution) |
-| `call_sites` | Caller/callee name, path, line (schema only) |
+| `call_sites` | Caller/callee name, qualifier, source ranges, caller language, resolution status, resolved symbol ID |

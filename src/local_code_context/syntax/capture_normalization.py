@@ -13,7 +13,7 @@ from local_code_context.syntax.capture_models import (
     QueryLanguageHooks,
 )
 from local_code_context.syntax.hooks import QUERY_LANGUAGE_HOOKS
-from local_code_context.syntax.models import CodeCall, CodeImport, CodeSymbol, ExtractionResult
+from local_code_context.syntax.models import CodeCall, CodeImport, CodeSymbol, EnclosingDef, ExtractionResult
 from local_code_context.syntax.models import ComparisonGap
 from local_code_context.syntax.parsers import get_parser_registry
 from local_code_context.syntax.queries import load_tags_query
@@ -121,6 +121,8 @@ def _capture_category(name: str) -> str | None:
         return "call"
     if normalized == "name":
         return "name"
+    if normalized == "qualifier" or normalized.startswith("qualifier."):
+        return "qualifier"
     return None
 
 
@@ -406,23 +408,87 @@ def _capture_to_import(node: Any, source: bytes, relative_path: str) -> Captured
     )
 
 
-def _enclosing_def_name(node: Any, source: bytes) -> str | None:
+def _enclosing_def(node: Any, source: bytes) -> EnclosingDef | None:
     current = getattr(node, "parent", None)
     while current is not None:
         node_type = getattr(current, "type", "")
         if node_type in {"function_definition", "async_function_definition", "function_item"}:
+            kind = "async_function" if node_type == "async_function_definition" else "function"
             for child in getattr(current, "children", []):
                 child_type = getattr(child, "type", "")
                 if child_type in {"identifier", "name"}:
-                    return _node_text(source, child).strip()
+                    name = _node_text(source, child).strip()
+                    if hasattr(current, "start_point"):
+                        start_line = int(getattr(current.start_point, "row", 0)) + 1
+                    else:
+                        start_line = 0
+                    parent_def = _enclosing_def(current, source)
+                    if parent_def and parent_def.kind in {"class", "struct", "impl", "trait"}:
+                        return EnclosingDef(
+                            kind="method",
+                            name=name,
+                            parent=parent_def.name,
+                            start_line=start_line,
+                            start_byte=int(getattr(current, "start_byte", 0)),
+                        )
+                    return EnclosingDef(
+                        kind=kind,
+                        name=name,
+                        parent=parent_def.name if parent_def else None,
+                        start_line=start_line,
+                        start_byte=int(getattr(current, "start_byte", 0)),
+                    )
+            return None
         if node_type in {"class_definition", "impl_item", "declaration_list"}:
             for child in getattr(current, "children", []):
                 child_type = getattr(child, "type", "")
                 if child_type in {"identifier", "type_identifier", "name"}:
-                    base = _node_text(source, child).strip()
-                    inner = _enclosing_def_name(current, source)
-                    return f"{base}.{inner}" if inner else base
+                    name = _node_text(source, child).strip()
+                    if hasattr(current, "start_point"):
+                        start_line = int(getattr(current.start_point, "row", 0)) + 1
+                    else:
+                        start_line = 0
+                    return EnclosingDef(
+                        kind="class" if node_type == "class_definition" else "impl",
+                        name=name,
+                        parent=None,
+                        start_line=start_line,
+                        start_byte=int(getattr(current, "start_byte", 0)),
+                    )
+            return None
         current = getattr(current, "parent", None)
+    return None
+
+
+def _enclosing_def_name(node: Any, source: bytes) -> str | None:
+    edef = _enclosing_def(node, source)
+    if edef is None:
+        return None
+    if edef.parent:
+        return f"{edef.parent}.{edef.name}"
+    return edef.name
+
+
+def _qualifier_from_call_node(call_node: Any, source: bytes) -> str | None:
+    function_node = getattr(call_node, "child_by_field_name", None)
+    if function_node is None:
+        return None
+    fn = call_node.child_by_field_name("function")
+    if fn is None:
+        return None
+    fn_type = getattr(fn, "type", "")
+    if fn_type == "attribute":
+        obj = fn.child_by_field_name("object")
+        if obj is not None:
+            return _node_text(source, obj)
+    elif fn_type == "field_expression":
+        val = fn.child_by_field_name("value")
+        if val is not None:
+            return _node_text(source, val)
+    elif fn_type == "scoped_identifier":
+        path_node = fn.child_by_field_name("path")
+        if path_node is not None:
+            return _node_text(source, path_node)
     return None
 
 
@@ -433,6 +499,7 @@ def _call_sites_from_captures(
 ) -> list[CodeCall]:
     call_nodes: list[Any] = []
     name_by_range: dict[tuple[int, int], str] = {}
+    qualifier_by_call: dict[int, str] = {}
 
     for capture_name, node in captures:
         category = _capture_category(capture_name)
@@ -441,9 +508,17 @@ def _call_sites_from_captures(
         elif _is_name_capture(capture_name):
             rng = (int(getattr(node, "start_byte", 0)), int(getattr(node, "end_byte", 0)))
             name_by_range[rng] = _node_text(source, node)
+        elif category == "qualifier":
+            for call_node in call_nodes:
+                cs = int(getattr(call_node, "start_byte", 0))
+                ce = int(getattr(call_node, "end_byte", 0))
+                ns = int(getattr(node, "start_byte", 0))
+                if cs <= ns < ce:
+                    qualifier_by_call[id(call_node)] = _node_text(source, node)
+                    break
 
     calls: list[CodeCall] = []
-    seen: set[tuple[int, str]] = set()
+    seen: set[tuple[int, int, str]] = set()
     for call_node in call_nodes:
         cs = int(getattr(call_node, "start_byte", 0))
         ce = int(getattr(call_node, "end_byte", 0))
@@ -455,9 +530,34 @@ def _call_sites_from_captures(
         if not callee_name:
             continue
 
-        start_line, _ = _node_lines(call_node)
-        caller_name = _enclosing_def_name(call_node, source) or "__module__"
-        key = (start_line, callee_name)
+        callee_qualifier = qualifier_by_call.get(id(call_node))
+        if callee_qualifier is None:
+            callee_qualifier = _qualifier_from_call_node(call_node, source)
+
+        start_point = getattr(call_node, "start_point", None)
+        end_point = getattr(call_node, "end_point", None)
+        if start_point is not None:
+            start_line = int(getattr(start_point, "row", 0)) + 1
+            start_column = int(getattr(start_point, "column", 0))
+        else:
+            start_line, _ = _node_lines(call_node)
+            start_column = 0
+        if end_point is not None:
+            end_line = int(getattr(end_point, "row", 0)) + 1
+            end_column = int(getattr(end_point, "column", 0))
+        else:
+            end_line = start_line
+            end_column = 0
+
+        edef = _enclosing_def(call_node, source)
+        if edef is not None:
+            caller_name = f"{edef.parent}.{edef.name}" if edef.parent else edef.name
+            caller_symbol_key = edef.symbol_key()
+        else:
+            caller_name = "__module__"
+            caller_symbol_key = None
+
+        key = (start_line, start_column, callee_name)
         if key not in seen:
             seen.add(key)
             calls.append(CodeCall(
@@ -465,6 +565,11 @@ def _call_sites_from_captures(
                 callee_name=callee_name,
                 path=relative_path,
                 start_line=start_line,
+                callee_qualifier=callee_qualifier,
+                start_column=start_column,
+                end_line=end_line,
+                end_column=end_column,
+                caller_symbol_key=caller_symbol_key,
             ))
     return calls
 
@@ -696,6 +801,12 @@ class TagQueryExtractor:
         capture_source = self._capture_source_or_default()
         if capture_source is None:
             raise RuntimeError(f"{self.language.title()} tags query unavailable")
+
+        if tree is None:
+            registry = get_parser_registry()
+            parser = registry.get(self.language)
+            if parser is not None:
+                tree = parser.parse(source)
 
         captures = _capture_pairs(tree, capture_source)
         if not captures:
