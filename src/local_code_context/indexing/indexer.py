@@ -73,7 +73,7 @@ SKIP_SUFFIXES = {
 
 
 def repo_name(repo: Path) -> str:
-    return repo.resolve().name
+    return repo.resolve().as_posix()
 
 
 def discover_workspace_repos(workspace: Path) -> list[Path]:

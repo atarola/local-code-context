@@ -35,17 +35,20 @@ class WatchRepoTests(unittest.TestCase):
             file_b.write_text("def b():\n    return 2\n", encoding="utf-8")
 
             manifest: dict[str, str] = {}
+            repo_a_name = index_repos.repo_name(repo_a)
+            repo_b_name = index_repos.repo_name(repo_b)
+
             index_repos.index_file(
                 path=file_a,
                 repo_root=repo_a,
-                repo="alpha",
+                repo=repo_a_name,
                 db_path=base,
                 manifest=manifest,
             )
             index_repos.index_file(
                 path=file_b,
                 repo_root=repo_b,
-                repo="beta",
+                repo=repo_b_name,
                 db_path=base,
                 manifest=manifest,
             )
@@ -55,7 +58,7 @@ class WatchRepoTests(unittest.TestCase):
             beta_before = {
                 r["name"]
                 for r in conn.execute(
-                    "SELECT name FROM symbols WHERE repo = 'beta' AND path = 'b.py'"
+                    f"SELECT name FROM symbols WHERE repo = '{repo_b_name}' AND path = 'b.py'"
                 ).fetchall()
             }
             conn.close()
@@ -76,7 +79,7 @@ class WatchRepoTests(unittest.TestCase):
             beta_after = {
                 r["name"]
                 for r in conn.execute(
-                    "SELECT name FROM symbols WHERE repo = 'beta' AND path = 'b.py'"
+                    f"SELECT name FROM symbols WHERE repo = '{repo_b_name}' AND path = 'b.py'"
                 ).fetchall()
             }
             conn.close()
@@ -91,11 +94,13 @@ class WatchRepoTests(unittest.TestCase):
             old_path.write_text("def old():\n    return 1\n", encoding="utf-8")
             new_path.write_text("def new():\n    return 2\n", encoding="utf-8")
 
+            repo_name_str = index_repos.repo_name(root)
+
             manifest: dict[str, str] = {}
             index_repos.index_file(
                 path=old_path,
                 repo_root=root,
-                repo="repo",
+                repo=repo_name_str,
                 db_path=root,
                 manifest=manifest,
             )
@@ -105,7 +110,7 @@ class WatchRepoTests(unittest.TestCase):
             old_before = {
                 r["name"]
                 for r in conn.execute(
-                    "SELECT name FROM symbols WHERE repo = 'repo' AND path = 'old.py'"
+                    f"SELECT name FROM symbols WHERE repo = '{repo_name_str}' AND path = 'old.py'"
                 ).fetchall()
             }
             conn.close()
@@ -126,12 +131,12 @@ class WatchRepoTests(unittest.TestCase):
 
             conn = open_db(xref_db)
             old_after = conn.execute(
-                "SELECT COUNT(*) as cnt FROM symbols WHERE repo = 'repo' AND path = 'old.py'"
+                f"SELECT COUNT(*) as cnt FROM symbols WHERE repo = '{repo_name_str}' AND path = 'old.py'"
             ).fetchone()
             new_after = {
                 r["name"]
                 for r in conn.execute(
-                    "SELECT name FROM symbols WHERE repo = 'repo' AND path = 'new.py'"
+                    f"SELECT name FROM symbols WHERE repo = '{repo_name_str}' AND path = 'new.py'"
                 ).fetchall()
             }
             conn.close()

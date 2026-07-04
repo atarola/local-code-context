@@ -7,7 +7,9 @@ from pathlib import Path
 
 from local_code_context.indexing.indexer import (
     DEFAULT_DB,
+    file_key,
     index_file,
+    iter_files,
     load_manifest,
     repo_name,
     resolve_repos,
@@ -33,6 +35,20 @@ def _change_name(change: object) -> str:
     if isinstance(name, str):
         return name
     return str(change)
+
+
+def _stale_keys_for(
+    manifest: dict[str, str],
+    repo_root: Path,
+) -> list[str]:
+    repo = repo_name(repo_root)
+    stale: list[str] = []
+    for key in list(manifest.keys()):
+        if key.startswith(f"{repo}:"):
+            rel_path = key[len(f"{repo}:"):]
+            if not (repo_root / rel_path).exists():
+                stale.append(key)
+    return stale
 
 
 def _process_changes(
@@ -86,6 +102,18 @@ def _process_changes(
     return counts
 
 
+def _resolve_affected_repos(
+    db_path: Path,
+    affected_repos: set[str],
+) -> None:
+    for repo in sorted(affected_repos):
+        res = resolve_call_sites_for_repo(db_path, repo)
+        print(
+            f"call resolution for {repo}: {res['resolved']} resolved, "
+            f"{res['ambiguous']} ambiguous, {res['unresolved']} unresolved"
+        )
+
+
 def run_watch(
     repos: list[str],
     workspaces: list[str],
@@ -109,7 +137,19 @@ def run_watch(
             repos=[str(repo) for repo in repo_paths],
             db=db,
         )
+    else:
+        # Ensure call sites are resolved even without re-indexing
+        for repo_root in repo_paths:
+            resolve_call_sites_for_repo(db_path, repo_name(repo_root))
+
     manifest = load_manifest(db_path)
+
+    # Prune manifest entries for files that no longer exist on disk
+    for repo_root in repo_paths:
+        for key in _stale_keys_for(manifest, repo_root):
+            del manifest[key]
+    if manifest:
+        save_manifest(db_path, manifest)
 
     print("watching:")
     for path in [*repo_paths, *workspace_paths]:
@@ -135,21 +175,24 @@ def run_watch(
             f"{counts['failed']} failure(s)"
         )
 
-        # Re-resolve call sites for every repo that had changes
         affected_repos: set[str] = set()
+        for repo_root in repo_paths:
+            stale = _stale_keys_for(manifest, repo_root)
+            if stale:
+                affected_repos.add(repo_name(repo_root))
+                for key in stale:
+                    del manifest[key]
+
         for _, path in changes:
             changed = Path(path).expanduser().resolve()
             owner = _owner_repo(changed, repo_paths)
             if owner is not None:
                 affected_repos.add(repo_name(owner[0]))
-        for repo in sorted(affected_repos):
-            res = resolve_call_sites_for_repo(db_path, repo)
-            print(
-                f"call resolution for {repo}: {res['resolved']} resolved, "
-                f"{res['ambiguous']} ambiguous, {res['unresolved']} unresolved"
-            )
 
+        # Save manifest BEFORE resolution so a crash leaves DB ↔ manifest consistent
         save_manifest(db_path, manifest)
+
+        _resolve_affected_repos(db_path, affected_repos)
         elapsed = time.monotonic() - start
         print(f"refresh complete in {elapsed:.1f}s")
 

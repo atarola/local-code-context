@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 CREATE_SYMBOLS = """
 CREATE TABLE IF NOT EXISTS symbols (
@@ -150,12 +150,44 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     conn.execute(CREATE_CALL_SITES)
 
 
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        "SELECT repo, root_path FROM repo_meta WHERE repo != '__schema__' AND root_path != ''"
+    ).fetchall()
+    for row in rows:
+        old_repo = row["repo"]
+        root_path_str = row["root_path"]
+        if not root_path_str:
+            continue
+        new_repo = str(Path(root_path_str).resolve())
+        if new_repo == old_repo:
+            continue
+        for table in ("symbols", "imports", "call_sites", "file_vibe"):
+            conn.execute(f"UPDATE {table} SET repo = ? WHERE repo = ?", (new_repo, old_repo))
+        conn.execute("UPDATE repo_meta SET repo = ? WHERE repo = ?", (new_repo, old_repo))
+
+
 def ensure_latest_schema(conn: sqlite3.Connection) -> None:
     version = _get_schema_version(conn)
     if version < 2:
         conn.executescript("BEGIN TRANSACTION")
         try:
             _migrate_v1_to_v2(conn)
+            conn.execute(
+                "INSERT OR REPLACE INTO repo_meta (id, repo, root_path, last_indexed) "
+                "VALUES (-1, '__schema__', '', ?)",
+                (str(2),),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    version = _get_schema_version(conn)
+    if version < 3:
+        conn.executescript("BEGIN TRANSACTION")
+        try:
+            _migrate_v2_to_v3(conn)
             conn.execute(
                 "INSERT OR REPLACE INTO repo_meta (id, repo, root_path, last_indexed) "
                 "VALUES (-1, '__schema__', '', ?)",
