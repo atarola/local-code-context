@@ -8,6 +8,7 @@ from importlib.resources import files
 QUERY_RESOURCES = {
     "python": "python-tags.scm",
     "rust": "rust-tags.scm",
+    "verilog": "verilog-tags.scm",
 }
 
 

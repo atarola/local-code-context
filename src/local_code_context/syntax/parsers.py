@@ -20,6 +20,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional dependency
     tree_sitter_rust = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional dependency
+    import tree_sitter_verilog
+except Exception:  # pragma: no cover - optional dependency
+    tree_sitter_verilog = None  # type: ignore[assignment]
+
 
 def _set_parser_language(parser: Any, language: Any) -> bool:
     if hasattr(parser, "language"):
@@ -109,6 +114,42 @@ def _build_rust_parser() -> Any | None:
     return parser
 
 
+def _build_verilog_language() -> Any | None:
+    if tree_sitter_verilog is None:
+        return None
+
+    language_factory = getattr(tree_sitter_verilog, "language", None)
+    if language_factory is None:
+        return None
+
+    try:
+        language = language_factory()
+    except Exception as exc:
+        print(f"failed to load tree-sitter Verilog grammar: {exc}", file=sys.stderr)
+        return None
+
+    if Language is not None and not isinstance(language, Language):
+        try:
+            language = Language(language)
+        except Exception:
+            pass
+    return language
+
+
+def _build_verilog_parser() -> Any | None:
+    if Parser is None or tree_sitter_verilog is None:
+        return None
+
+    parser = Parser()
+    language = _build_verilog_language()
+    if language is None:
+        return None
+
+    if not _set_parser_language(parser, language):
+        return None
+    return parser
+
+
 @dataclass
 class ParserRegistry:
     _parsers: dict[str, Any | None] = field(default_factory=dict)
@@ -124,6 +165,7 @@ class ParserRegistry:
         builders = {
             "python": (_build_python_parser, _build_python_language),
             "rust": (_build_rust_parser, _build_rust_language),
+            "verilog": (_build_verilog_parser, _build_verilog_language),
         }
         builder = builders.get(key)
         if builder is None:

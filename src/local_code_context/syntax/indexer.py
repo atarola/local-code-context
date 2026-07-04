@@ -49,6 +49,7 @@ EXTRACTORS: dict[str, LanguageExtractor] = {
 QUERY_EXTRACTORS: dict[str, TagQueryExtractor] = {
     "python": PythonTagQueryExtractor(),
     "rust": TagQueryExtractor("rust"),
+    "verilog": TagQueryExtractor("verilog"),
 }
 
 
@@ -601,6 +602,7 @@ def build_index_records(
     builders: dict[str, Any] = {
         "python": _build_python_records,
         "rust": _build_query_records,
+        "verilog": _build_query_records,
         "assembly": _build_assembly_records,
     }
     builder = builders.get(language or "")

@@ -7,6 +7,10 @@ LANGUAGE_BY_SUFFIX = {
     ".py": "python",
     ".pyi": "python",
     ".rs": "rust",
+    ".v": "verilog",
+    ".vh": "verilog",
+    ".sv": "verilog",
+    ".svh": "verilog",
     ".s": "assembly",
     ".inc": "assembly",
 }
