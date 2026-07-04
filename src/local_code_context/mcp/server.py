@@ -135,9 +135,9 @@ def _call_hybrid_search(
 
     output_parts: list[str] = [f"Hybrid search results (limit={limit}):"]
 
-    for r in results:
+    for i, r in enumerate(results, 1):
         line = (
-            f"  [{r.rank}] {r.repo} {r.path}:{r.start_line}-{r.end_line}"
+            f"  [{i}] {r.repo} {r.path}:{r.start_line}-{r.end_line}"
         )
         if r.symbol:
             line += f" symbol={r.symbol}"
